@@ -1,7 +1,6 @@
 package com.neosicher.app.ui.components
 
 import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
@@ -11,6 +10,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -29,7 +29,7 @@ fun ConnectionIndicator(
     modifier: Modifier = Modifier,
 ) {
     val transition = rememberInfiniteTransition(label = "conn")
-    val pulse by transition.animateFloatAsState(
+    val pulse by transition.animateFloat(
         initialValue = 0.35f,
         targetValue = 0.85f,
         animationSpec = infiniteRepeatable(
