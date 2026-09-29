@@ -4,6 +4,7 @@ import android.widget.FrameLayout
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,7 +14,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -29,7 +29,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -274,7 +273,7 @@ private fun FullscreenButton(onClick: () -> Unit, modifier: Modifier = Modifier)
             tint = NeoColors.TextPrimary,
             modifier = Modifier
                 .size(20.dp)
-                .clickableNoRipple(onClick),
+                .clickable(onClick = onClick),
         )
     }
 }
@@ -324,7 +323,7 @@ private fun CenteredState(
                 modifier = Modifier
                     .clip(RoundedCornerShape(NeoDimens.PillCorner))
                     .background(NeoColors.Accent)
-                    .clickableNoRipple(onAction)
+                    .clickable(onClick = onAction)
                     .padding(horizontal = 18.dp, vertical = 10.dp),
             ) {
                 Text(
@@ -338,12 +337,4 @@ private fun CenteredState(
     }
 }
 
-/** clickable sin ripple para overlays discretos. */
-private fun Modifier.clickableNoRipple(onClick: () -> Unit): Modifier =
-    this.then(
-        androidx.compose.foundation.clickable(
-            interactionSource = androidx.compose.foundation.interaction.MutableInteractionSource(),
-            indication = null,
-            onClick = onClick,
-        )
-    )
+

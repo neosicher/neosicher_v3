@@ -1,6 +1,7 @@
 package com.neosicher.app.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -11,9 +12,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.neosicher.app.camera.CameraManager
 import com.neosicher.app.ui.components.CameraPreviewPanel
@@ -22,6 +25,7 @@ import com.neosicher.app.ui.components.MonitoringPanel
 import com.neosicher.app.ui.components.NeosicherModeSelector
 import com.neosicher.app.ui.components.NeosicherTopBar
 import com.neosicher.app.ui.components.UsbDiagnosticsPanel
+import com.neosicher.app.ui.theme.NeoColors
 import com.neosicher.app.ui.theme.NeoDimens
 import com.neosicher.app.ui.theme.NeoGradients
 
@@ -50,7 +54,8 @@ fun NeosicherScreen(
             .fillMaxSize()
             .background(NeoGradients.ScreenBackground),
     ) {
-        val wide = maxWidth >= 720.dp
+        // maxWidth proviene del BoxWithConstraintsScope (this).
+        val wide = this.maxWidth >= 720.dp
 
         Column(modifier = Modifier.fillMaxSize()) {
             NeosicherTopBar(
@@ -214,21 +219,15 @@ private fun NarrowContent(
 
 @Composable
 private fun DiagnosticsToggle(shown: Boolean, onClick: () -> Unit) {
-    androidx.compose.material3.Text(
+    Text(
         text = if (shown) "Ocultar diagnóstico USB" else "Mostrar diagnóstico USB",
-        color = com.neosicher.app.ui.theme.NeoColors.Accent,
-        style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
+        color = NeoColors.Accent,
+        style = MaterialTheme.typography.labelMedium,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp)
-            .then(
-                androidx.compose.foundation.clickable(
-                    interactionSource = androidx.compose.foundation.interaction.MutableInteractionSource(),
-                    indication = null,
-                    onClick = onClick,
-                )
-            ),
-        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            .clickable(onClick = onClick)
+            .padding(vertical = 4.dp),
+        textAlign = TextAlign.Center,
     )
 }
 
