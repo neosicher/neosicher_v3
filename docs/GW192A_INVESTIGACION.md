@@ -346,14 +346,95 @@ Confirmado:
 No confirmado:
 
 - Protocolo exacto del GW192A.
-- Si es UVC estándar.
+- Si es UVC estándar (existe evidencia consistente con UVC, ver sección 12; no está comprobado mediante comunicación real).
 - Formato de vídeo.
-- Endpoint de streaming.
 - Método de inicio de streaming.
 - Estructura de frame.
 - Ubicación de datos térmicos.
 - Método de conversión a temperatura.
 - Calibración.
-- Compatibilidad completa con Android USB Host.
 
 La investigación debe continuar desde este estado y no reiniciar las hipótesis ya documentadas.
+
+---
+
+## 12. Evidencia de descriptors USB reales (Android USB Host, app NEOSICHER)
+
+**Fecha:** primera enumeración real en dispositivo físico (POCO F7 + GW192A por USB OTG),
+mediante `UsbDeviceManager.openAndEnumerate()` de la app NEOSICHER (ver
+`app/src/main/java/com/neosicher/app/usb/UsbDeviceManager.kt`). Datos leídos directamente
+de `UsbDevice` / `UsbConfiguration` / `UsbInterface` / `UsbEndpoint` de Android, sin
+interpretación de protocolo.
+
+### 12.1 Datos crudos (CONFIRMADO)
+
+```
+Nombre:          /dev/bus/usb/001/002
+VID:             0x37B4
+PID:             0x0102
+Class/Sub/Proto: 239/2/1
+Manufacturer:    Camera
+Product:         Camera
+Serial:          EA5965521
+
+Config #1 · 200mA · selfPowered=false
+  Interface #0 alt=0 class=14 sub=1 proto=0
+    EP 0x83 IN INTERRUPT max=16  int=8
+  Interface #1 alt=0 class=14 sub=2 proto=0
+    EP 0x81 IN BULK      max=512 int=0
+```
+
+Este resultado confirma y amplía la evidencia de la sección 2 (mismo VID/PID/Class/Sub/Proto
+a nivel de dispositivo) y añade, por primera vez, evidencia a nivel de **interfaz**.
+
+### 12.2 Lectura de la evidencia (sin asumir protocolo de streaming)
+
+- **Class de dispositivo 239 / Subclass 2 / Protocol 1**: es la combinación estándar
+  USB-IF para "Miscellaneous — Interface Association Descriptor" (IAD), usada por
+  dispositivos compuestos que agrupan varias interfaces relacionadas bajo una sola función.
+  **CONFIRMADO** (leído del descriptor de dispositivo); la implicación de que agrupa las
+  dos interfaces de video de abajo es **INFERIDO** (razonable dado el patrón, no verificado
+  leyendo el IAD explícito).
+
+- **Interface #0: class=14, subclass=1, protocol=0**. La clase USB `14` (0x0E) está
+  reservada por USB-IF para **Video**, y la subclase `1` corresponde a
+  **VideoControl Interface**. **CONFIRMADO** que la interfaz declara esa clase/subclase;
+  **INFERIDO** que funciona como VideoControl real (no se ha leído el Class-Specific
+  VC Interface Descriptor ni comprobado ningún control transfer).
+  Su endpoint `0x83 IN INTERRUPT` (max 16 bytes) es consistente con el "status interrupt
+  endpoint" opcional que UVC define para VideoControl. **INFERIDO**, no confirmado.
+
+- **Interface #1: class=14, subclass=2, protocol=0**. Subclase `2` corresponde a
+  **VideoStreaming Interface** en la especificación UVC. **CONFIRMADO** a nivel de
+  clase/subclase declarada. Su endpoint `0x81 IN BULK` (max 512 bytes, sin intervalo)
+  indica transferencia **bulk**, no isócrona. **CONFIRMADO** que el tipo de transferencia
+  es bulk (leído del descriptor de endpoint); esto descarta la hipótesis de streaming
+  isócrono para este dispositivo, algo que antes era NO DETERMINADO.
+
+- **Conjunto (class=14 en dos interfaces con subclases 1 y 2)**: es el patrón estructural
+  estándar de un dispositivo **UVC (USB Video Class)** compuesto. **INFERIDO** con
+  bastante fuerza a partir de evidencia directa de descriptors — pero **sigue sin
+  confirmarse** mediante comunicación real (no se han leído los Class-Specific
+  Descriptors de formato/frame UVC, ni enviado ningún control transfer, ni iniciado
+  ningún stream). No se debe tratar como CONFIRMADO todavía.
+
+### 12.3 Qué NO se puede concluir de esta evidencia
+
+- No se confirma el **formato de vídeo** (YUYV/MJPEG/RAW16/otro): requiere leer los
+  Class-Specific VS Interface Descriptors (Format/Frame descriptors) dentro de
+  Interface #1, que Android `UsbInterface`/`UsbEndpoint` no expone directamente — haría
+  falta leer el **descriptor de configuración crudo** (`UsbDeviceConnection.getRawDescriptors()`
+  o equivalente) y parsearlo manualmente.
+- No se confirma si existe **información térmica** en el stream, ni su ubicación, ni
+  calibración.
+- No se confirma el **método de inicio de streaming** (qué control transfers UVC
+  estándar — `SET_CUR`/Probe-Commit — acepta o requiere este dispositivo en concreto).
+
+### 12.4 Próximo paso sugerido (no implementado todavía)
+
+Para avanzar en la cadena de evidencia sin inventar protocolo, el siguiente paso natural
+sería leer y registrar los **descriptors crudos de configuración** (bytes completos vía
+`getRawDescriptors()`), que contienen los Class-Specific Descriptors de UVC (formatos,
+resoluciones, frame intervals) si el dispositivo los implementa. Esto seguiría siendo
+**solo lectura/diagnóstico**, sin iniciar streaming ni enviar comandos de control.
+**REQUIERE PRUEBA EN POCO F7 + GW192A.**
