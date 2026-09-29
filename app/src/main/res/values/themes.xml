@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        Tema base de la plataforma. La UI real se define en Compose (NeosicherTheme).
+        Usamos un tema sin ActionBar y con fondo oscuro para que el arranque
+        (splash del sistema) coincida con la estética NEOSICHER.
+    -->
+    <style name="Theme.Neosicher" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">@color/neo_background</item>
+        <item name="android:navigationBarColor">@color/neo_background</item>
+        <item name="android:windowBackground">@color/neo_background</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>
