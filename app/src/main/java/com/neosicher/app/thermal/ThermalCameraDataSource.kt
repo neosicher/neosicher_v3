@@ -31,8 +31,9 @@ interface ThermalCameraDataSource {
     fun requestPermission()
 
     /**
-     * Abre la conexión y enumera interfaces/endpoints (máximo READY en este MVP).
-     * NO inicia ningún stream térmico.
+     * Abre la conexión y enumera interfaces/endpoints (estado READY). A partir
+     * de ahí, la implementación puede intentar iniciar streaming real solo si
+     * hay evidencia (descriptors UVC) que lo respalde — nunca simulándolo.
      */
     fun connectAndInspect()
 

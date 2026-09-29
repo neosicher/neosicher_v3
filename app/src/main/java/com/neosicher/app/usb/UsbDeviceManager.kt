@@ -165,6 +165,85 @@ class UsbDeviceManager(private val appContext: Context) {
     }
 
     /**
+     * Lee los descriptors de configuración **crudos** del dispositivo y los
+     * analiza en busca de descriptors class-specific de UVC (VideoControl /
+     * VideoStreaming, formatos y resoluciones declaradas).
+     *
+     * Es de solo lectura: abre la conexión únicamente para leer
+     * `getRawDescriptors()`, sin reclamar interfaces ni iniciar transferencias.
+     * No confirma que el GW192A "sea" UVC ni que vaya a poder transmitir un
+     * stream: solo reporta qué declaran sus propios descriptors.
+     *
+     * @return [UvcParseResult], o null si no se pudo leer (sin permiso, sin
+     *   conexión, o error de E/S).
+     */
+    fun readUvcDescriptors(device: UsbDevice): UvcParseResult? {
+        val manager = usbManager ?: return null
+        if (!manager.hasPermission(device)) {
+            Log.w(TAG, "readUvcDescriptors sin permiso para ${device.deviceName}")
+            return null
+        }
+
+        var connection: UsbDeviceConnection? = null
+        return try {
+            connection = manager.openDevice(device) ?: return null
+            val raw = connection.rawDescriptors
+            if (raw == null || raw.isEmpty()) {
+                Log.w(TAG, "getRawDescriptors() devolvió vacío/null")
+                return null
+            }
+            val result = UvcDescriptorParser.parse(raw)
+            logUvcResult(result)
+            result
+        } catch (t: Throwable) {
+            Log.e(TAG, "Error leyendo descriptors crudos UVC", t)
+            null
+        } finally {
+            connection?.close()
+        }
+    }
+
+    /**
+     * Abre una [UsbDeviceConnection] persistente para [device] y la deja
+     * abierta (a diferencia de [openAndEnumerate] / [readUvcDescriptors], que
+     * la cierran tras leer). El llamador es responsable de cerrarla cuando
+     * termine (p. ej. al detener un [UvcStreamingSession]).
+     *
+     * @return la conexión abierta, o null si no hay permiso o falla la apertura.
+     */
+    fun openPersistentConnection(device: UsbDevice): UsbDeviceConnection? {
+        val manager = usbManager ?: return null
+        if (!manager.hasPermission(device)) {
+            Log.w(TAG, "openPersistentConnection sin permiso para ${device.deviceName}")
+            return null
+        }
+        return try {
+            manager.openDevice(device)
+        } catch (t: Throwable) {
+            Log.e(TAG, "Error abriendo conexión persistente", t)
+            null
+        }
+    }
+
+    private fun logUvcResult(result: UvcParseResult) {
+        Log.i(TAG, "== Parseo UVC (bytes crudos, ${result.rawDescriptorTotalBytes}B) ==")
+        result.parseLog.forEach { Log.i(TAG, "  $it") }
+        Log.i(TAG, "VideoControl (VC_HEADER) encontrado=${result.videoControlInterfaceFound}")
+        result.streamingFormats.forEach { fmt ->
+            Log.i(TAG, "  Formato ${fmt.kind} idx=${fmt.formatIndex} guid=${fmt.guidHex} bpp=${fmt.bitsPerPixel}")
+            fmt.frames.forEach { fr ->
+                Log.i(TAG, "    Frame idx=${fr.frameIndex} ${fr.widthPx}x${fr.heightPx} " +
+                    "~${"%.1f".format(fr.approxFps)}fps")
+            }
+        }
+        if (result.doubleHeightCandidates.isNotEmpty()) {
+            Log.i(TAG, "HIPÓTESIS (no confirmada): ${result.doubleHeightCandidates.size} frame(s) con " +
+                "altura = 2x ancho, patrón consistente con doble altura visible+térmico documentado " +
+                "públicamente para módulos similares. NO confirma el protocolo del GW192A.")
+        }
+    }
+
+    /**
      * Construye [UsbDeviceInfo] leyendo descriptors reales. Los nombres de string
      * (manufacturer/product/serial) requieren la conexión abierta para resolverse.
      */

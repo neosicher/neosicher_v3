@@ -32,11 +32,14 @@ import com.neosicher.app.ui.theme.NeoGradients
 /**
  * Pantalla principal NEOSICHER.
  *
- * Layout adaptativo:
- *  - Ancho (horizontal / tablet): dashboard 70% cámara / 30% panel lateral.
- *  - Estrecho (teléfono vertical): apilado, cámara arriba y métricas debajo.
+ * La app está fijada a orientación horizontal (ver AndroidManifest:
+ * `android:screenOrientation="sensorLandscape"`), independientemente de si la
+ * pantalla del sistema está bloqueada en vertical. Por eso el layout tipo
+ * dashboard 70% cámara / 30% panel lateral es el predeterminado.
  *
- * No fija tamaños absolutos que rompan resoluciones: usa pesos y BoxWithConstraints.
+ * Se conserva `BoxWithConstraints` como red de seguridad: en pantallas muy
+ * angostas (p. ej. la pantalla de cobertura de un plegable) se apila el
+ * contenido en vez de romper las proporciones. No se fijan tamaños absolutos.
  */
 @Composable
 fun NeosicherScreen(
@@ -55,7 +58,11 @@ fun NeosicherScreen(
             .background(NeoGradients.ScreenBackground),
     ) {
         // maxWidth proviene del BoxWithConstraintsScope (this).
-        val wide = this.maxWidth >= 720.dp
+        // Umbral bajo (480dp) porque la app ya está forzada a horizontal:
+        // casi cualquier teléfono en landscape supera esto. El modo "narrow"
+        // queda solo como red de seguridad para pantallas muy angostas
+        // (p. ej. pantalla de cobertura de un plegable).
+        val wide = this.maxWidth >= 480.dp
 
         Column(modifier = Modifier.fillMaxSize()) {
             NeosicherTopBar(

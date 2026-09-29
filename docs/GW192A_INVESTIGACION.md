@@ -438,3 +438,69 @@ sería leer y registrar los **descriptors crudos de configuración** (bytes comp
 resoluciones, frame intervals) si el dispositivo los implementa. Esto seguiría siendo
 **solo lectura/diagnóstico**, sin iniciar streaming ni enviar comandos de control.
 **REQUIERE PRUEBA EN POCO F7 + GW192A.**
+
+---
+
+## 13. Lectura de descriptors crudos UVC e hipótesis de formato "doble altura"
+
+### 13.1 Qué se implementó
+
+Se implementó `UvcDescriptorParser` (`app/src/main/java/com/neosicher/app/usb/UvcDescriptorParser.kt`),
+que lee `UsbDeviceConnection.getRawDescriptors()` (bytes crudos de la configuración USB
+activa) y busca descriptors **class-specific** de UVC dentro de ellos:
+
+- `VC_HEADER` dentro de la interfaz VideoControl (confirma o descarta que exista el
+  descriptor de cabecera estándar de VideoControl).
+- `VS_FORMAT_UNCOMPRESSED` / `VS_FORMAT_MJPEG` / `VS_FORMAT_FRAME_BASED` y sus
+  `VS_FRAME_*` asociados dentro de la interfaz VideoStreaming: formato(s) y
+  resolución(es)/frame-rate(s) que el dispositivo declara soportar.
+
+**Fuente de la estructura de bytes parseada:** la especificación pública
+**"USB Device Class Definition for Video Devices" (UVC 1.1/1.5, USB Implementers
+Forum)** — un estándar publicado y de acceso público, igual que el USB 2.0 Core Spec ya
+usado en las secciones 2 y 12. **No se ha usado THG Start ni ningún código propietario**
+para construir este parser, en cumplimiento de la sección 10 de este documento.
+
+Es una operación de **solo lectura**: abre la conexión únicamente para llamar a
+`getRawDescriptors()` y la cierra inmediatamente. No reclama (`claimInterface`) ninguna
+interfaz, no envía control transfers, no inicia ningún stream.
+
+### 13.2 Hipótesis de trabajo: formato "doble altura" (HIPÓTESIS, no confirmada para el GW192A)
+
+Es públicamente conocido —documentado en proyectos open-source de terceros que trabajan
+con módulos térmicos UVC de bajo costo similares en tamaño/precio al GW192A (p. ej.
+InfiRay P2 Pro y clones; ver repositorios públicos como `alufers/thermal-cat`,
+`LeoDJ/P2Pro-Viewer`, `fbreitwieser/thermal-camera-android`, `ks00x/p2proviewer`,
+`cfbird/HT203U-Thermal`)— que una familia de módulos sensores térmicos expone un único
+stream UVC cuyo **frame declarado tiene el doble de alto que de ancho** (p. ej.
+192×384 en vez de 192×192): la mitad superior transporta la imagen visible/paleta
+(YUYV) y la mitad inferior transporta datos térmicos crudos empaquetados dentro del
+mismo formato de píxel.
+
+**Esto es una HIPÓTESIS aplicada por analogía con hardware de terceros, NO evidencia
+directa del GW192A.** `UvcParseResult.doubleHeightCandidates` en el código marca
+explícitamente (en comentario y en log) cualquier frame cuya altura declarada sea 2×
+su ancho, precisamente para poder contrastar la hipótesis contra los bytes reales del
+GW192A sin asumir que aplica de antemano.
+
+### 13.3 Qué confirmaría o descartaría la hipótesis
+
+- Si los `VS_FRAME_*` reales del GW192A declaran una resolución con **altura = 2×
+  ancho** (p. ej. 192×384) → **evidencia a favor** de que sigue el mismo patrón que la
+  familia de hardware de referencia. Seguiría siendo INFERIDO, no CONFIRMADO, hasta
+  abrir el stream y verificar que los bytes de la mitad inferior no son imagen visible.
+- Si declara una resolución **cuadrada** (192×192) u otra proporción → la hipótesis
+  queda **descartada** para este dispositivo y no debe aplicarse el parseo de doble
+  altura.
+- Si no hay ningún `VS_FORMAT_*`/`VS_FRAME_*` en absoluto (p. ej. porque la clase 14
+  declarada en las interfaces no corresponde realmente a descriptors UVC completos) →
+  la hipótesis "es UVC estándar" pasa de INFERIDO a **NO DETERMINADO / posiblemente
+  falso**, y no debe intentarse abrir el stream como UVC.
+
+### 13.4 Estado de verificación
+
+**NO DETERMINADO todavía.** Este parser está implementado pero su resultado contra el
+GW192A real no se ha registrado en este documento. **REQUIERE PRUEBA EN POCO F7 +
+GW192A**: ejecutar `UsbDeviceManager.readUvcDescriptors()` con el dispositivo conectado
+y anotar aquí, con la misma disciplina de evidencia de la sección 12, qué formatos y
+frames se encontraron realmente (o si no se encontró ninguno).

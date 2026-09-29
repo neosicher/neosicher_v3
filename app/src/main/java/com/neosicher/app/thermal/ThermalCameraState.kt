@@ -6,10 +6,13 @@ import com.neosicher.app.usb.UsbDeviceInfo
  * Estado del ciclo de vida de la cámara térmica GW192A.
  *
  * REGLA: ningún estado afirma que el GW192A esté transmitiendo datos térmicos
- * hasta que se compruebe realmente. En este MVP el flujo real llega, como máximo,
- * hasta READY (dispositivo abierto y endpoints enumerados). Los estados
- * posteriores (STREAMING) existen en el modelo pero NO se alcanzan todavía porque
- * el protocolo no está determinado (ver docs/GW192A_INVESTIGACION.md).
+ * hasta que se compruebe realmente. El estado READY (dispositivo abierto y
+ * endpoints enumerados) NO implica stream. STREAMING solo se alcanza si:
+ * (a) los descriptors UVC reales del dispositivo declaran un formato/frame
+ * válido (ver docs/GW192A_INVESTIGACION.md §13), y (b) la negociación
+ * estándar UVC Probe/Commit fue aceptada por el hardware real. Si cualquiera
+ * de las dos condiciones falla, el estado permanece en READY o pasa a ERROR,
+ * nunca se simula STREAMING.
  */
 enum class ThermalConnectionStatus {
     /** No hay ningún GW192A conectado. */
@@ -26,22 +29,26 @@ enum class ThermalConnectionStatus {
 
     /**
      * Conexión USB abierta y descriptors (interfaces/endpoints) enumerados.
-     * Máximo estado alcanzable en este MVP. NO implica stream térmico.
+     * NO implica stream térmico. Desde aquí se intenta automáticamente leer
+     * los descriptors UVC y, si son válidos, iniciar el streaming real.
      */
     READY,
 
     /**
-     * Transmitiendo frames térmicos. REQUIERE PRUEBA EN POCO F7 + GW192A y un
-     * protocolo confirmado. NO se activa en este MVP.
+     * Streaming UVC real negociado y activo con el hardware conectado
+     * (Probe/Commit aceptado, frames llegando por el endpoint bulk real).
+     * La interpretación del contenido del frame es EXPERIMENTAL (ver
+     * ThermalFrameInterpreter): nunca se presenta como temperatura calibrada.
      */
     STREAMING,
 
-    /** Error durante detección, permiso, apertura o enumeración. */
+    /** Error durante detección, permiso, apertura, enumeración o negociación UVC. */
     ERROR,
 
     /**
      * El dispositivo/entorno no soporta lo necesario (p. ej. sin USB Host,
-     * o descriptors incompatibles). No es un fallo transitorio.
+     * sin descriptors UVC válidos, o solo endpoint isócrono no soportado).
+     * No es un fallo transitorio.
      */
     UNSUPPORTED,
 }
@@ -59,6 +66,8 @@ data class ThermalCameraState(
     val deviceInfo: UsbDeviceInfo? = null,
     val message: String = "Termográfica no conectada",
     val errorDetail: String? = null,
+    /** Último frame interpretado (solo cuando status == STREAMING). EXPERIMENTAL. */
+    val lastFrame: ThermalFrameResult? = null,
 ) {
     val isDeviceKnown: Boolean get() = deviceInfo != null
 

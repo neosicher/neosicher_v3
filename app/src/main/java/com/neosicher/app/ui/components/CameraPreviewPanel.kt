@@ -2,6 +2,7 @@ package com.neosicher.app.ui.components
 
 import android.widget.FrameLayout
 import androidx.camera.view.PreviewView
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -35,7 +36,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -180,13 +183,20 @@ private fun AndroidCameraContent(
     }
 }
 
-// -- Cámara térmica (estado, nunca imagen inventada) ------------------------
+// -- Cámara térmica (stream experimental real, o estado honesto) ------------
 
 @Composable
 private fun ThermalContent(thermalState: ThermalCameraState) {
+    val frame = thermalState.lastFrame
+    if (thermalState.status == ThermalConnectionStatus.STREAMING && frame != null) {
+        ThermalStreamContent(frame = frame)
+        return
+    }
+
     val (icon, tint) = when (thermalState.status) {
         ThermalConnectionStatus.READY,
-        ThermalConnectionStatus.CONNECTED -> Icons.Filled.Sensors to NeoColors.Success
+        ThermalConnectionStatus.CONNECTED,
+        ThermalConnectionStatus.STREAMING -> Icons.Filled.Sensors to NeoColors.Success
         ThermalConnectionStatus.ERROR,
         ThermalConnectionStatus.UNSUPPORTED -> Icons.Filled.UsbOff to NeoColors.Error
         else -> Icons.Filled.Sensors to NeoColors.TextTertiary
@@ -198,6 +208,53 @@ private fun ThermalContent(thermalState: ThermalCameraState) {
             ?: "No se muestran datos térmicos hasta confirmar el protocolo del GW192A.",
         tint = tint,
     )
+}
+
+/**
+ * Muestra el stream térmico REAL (frames recibidos del GW192A por USB),
+ * interpretado bajo la hipótesis EXPERIMENTAL de doble altura (ver
+ * ThermalFrameInterpreter). Se prioriza la paleta de calor si está
+ * disponible; si no, se muestra la imagen visible decodificada.
+ *
+ * Se marca de forma visible y permanente como "experimental / sin calibrar":
+ * los valores mostrados son counts crudos relativos del propio frame, NUNCA
+ * temperatura en grados ni un diagnóstico.
+ */
+@Composable
+private fun ThermalStreamContent(frame: com.neosicher.app.thermal.ThermalFrameResult) {
+    val bitmap = frame.thermalPaletteBitmap ?: frame.visibleBitmap
+    Box(modifier = Modifier.fillMaxSize()) {
+        Image(
+            bitmap = bitmap.asImageBitmap(),
+            contentDescription = "Stream térmico experimental (sin calibrar)",
+            modifier = Modifier.fillMaxSize(),
+            contentScale = ContentScale.Fit,
+            filterQuality = androidx.compose.ui.graphics.FilterQuality.None,
+        )
+
+        // Aviso permanente: nunca se debe interpretar esto como temperatura real.
+        Row(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 56.dp)
+                .clip(RoundedCornerShape(NeoDimens.PillCorner))
+                .background(NeoColors.Warning.copy(alpha = 0.9f))
+                .padding(horizontal = 14.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = if (frame.rawMin != null && frame.rawMax != null) {
+                    "Experimental · sin calibrar · raw[${frame.rawMin}–${frame.rawMax}]"
+                } else {
+                    "Experimental · sin calibrar"
+                },
+                color = NeoColors.Background,
+                fontWeight = FontWeight.SemiBold,
+                style = MaterialTheme.typography.labelMedium,
+            )
+        }
+    }
 }
 
 // -- Piezas de overlay / estado --------------------------------------------
