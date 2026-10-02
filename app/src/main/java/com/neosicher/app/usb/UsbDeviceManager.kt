@@ -230,16 +230,25 @@ class UsbDeviceManager(private val appContext: Context) {
         result.parseLog.forEach { Log.i(TAG, "  $it") }
         Log.i(TAG, "VideoControl (VC_HEADER) encontrado=${result.videoControlInterfaceFound}")
         result.streamingFormats.forEach { fmt ->
-            Log.i(TAG, "  Formato ${fmt.kind} idx=${fmt.formatIndex} guid=${fmt.guidHex} bpp=${fmt.bitsPerPixel}")
+            Log.i(TAG, "  Formato ${fmt.kind} idx=${fmt.formatIndex} fourCC=${fmt.fourCc} " +
+                "guid=${fmt.guidHex} bpp=${fmt.bitsPerPixel}")
             fmt.frames.forEach { fr ->
                 Log.i(TAG, "    Frame idx=${fr.frameIndex} ${fr.widthPx}x${fr.heightPx} " +
                     "~${"%.1f".format(fr.approxFps)}fps")
             }
         }
-        if (result.doubleHeightCandidates.isNotEmpty()) {
-            Log.i(TAG, "HIPÓTESIS (no confirmada): ${result.doubleHeightCandidates.size} frame(s) con " +
-                "altura = 2x ancho, patrón consistente con doble altura visible+térmico documentado " +
-                "públicamente para módulos similares. NO confirma el protocolo del GW192A.")
+        val doubleHeight = result.doubleHeightCandidatesWithFormat
+        if (doubleHeight.isNotEmpty()) {
+            Log.i(TAG, "HIPÓTESIS (no confirmada, descartada para GW192A por evidencia pública — " +
+                "ver docs §13.5): ${doubleHeight.size} frame(s) con altura = 2x ancho.")
+        }
+        val chosen = result.recommendedFrame
+        if (chosen != null) {
+            val (fmt, fr) = chosen
+            Log.i(TAG, "Frame recomendado: fourCC=${fmt.fourCc} ${fr.widthPx}x${fr.heightPx} " +
+                "formatIdx=${fmt.formatIndex} frameIdx=${fr.frameIndex}")
+        } else {
+            Log.i(TAG, "Ningún frame declarado para recomendar.")
         }
     }
 
