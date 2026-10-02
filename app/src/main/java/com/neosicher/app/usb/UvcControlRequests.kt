@@ -77,6 +77,32 @@ object UvcControlRequests {
         )
     }
 
+    /**
+     * Reconstruye un [ProbeCommitResult] a partir de la propuesta ORIGINAL del
+     * host (el buffer construido por [buildProbeCommitRequest]), sin depender
+     * de una respuesta GET_CUR del dispositivo.
+     *
+     * Justificación: algunas cámaras UVC de bajo costo (observado con el
+     * GW192A real — ver docs/GW192A_INVESTIGACION.md §13.6) aceptan el
+     * SET_CUR(Probe) pero no implementan correctamente el GET_CUR(Probe)
+     * posterior, pese a aceptar y transmitir el stream con normalidad (así lo
+     * hace, de hecho, el driver UVC estándar de Windows con este mismo
+     * dispositivo). Usar la propuesta propia como "negociada" es un
+     * comportamiento tolerante estándar en implementaciones UVC de terceros,
+     * no una invención de protocolo: seguimos pidiendo exactamente el
+     * formatIndex/frameIndex que el propio descriptor del dispositivo declaró.
+     */
+    fun requestAsResult(buf: ByteArray): ProbeCommitResult? {
+        if (buf.size < PROBE_COMMIT_LENGTH) return null
+        return ProbeCommitResult(
+            formatIndex = buf[2].toIntUnsigned(),
+            frameIndex = buf[3].toIntUnsigned(),
+            frameIntervalUnits = readU32(buf, 4),
+            maxVideoFrameSize = 0L, // desconocido: el llamador aplica un fallback por tamaño esperado
+            maxPayloadTransferSize = 0L,
+        )
+    }
+
     private fun writeU32(buf: ByteArray, offset: Int, value: Long) {
         buf[offset] = (value and 0xFF).toByte()
         buf[offset + 1] = ((value shr 8) and 0xFF).toByte()

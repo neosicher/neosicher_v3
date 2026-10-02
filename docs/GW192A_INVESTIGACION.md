@@ -558,3 +558,36 @@ exactas declara *nuestra* unidad concreta (podría variar por lote/firmware resp
 la unidad documentada por `kuczy`). El panel de diagnóstico USB de la app ahora muestra
 el FourCC real y cuál frame fue elegido (`← elegido`), precisamente para registrar esa
 evidencia aquí en una próxima actualización de este documento.
+
+### 13.6 CONFIRMADO con hardware real: visualización en OBS (Windows) + fallo de GET_CUR(Probe) en Android
+
+**Evidencia CONFIRMADA (observación directa del propio usuario del proyecto, no de
+terceros):** se conectó el GW192A a un PC Windows y se abrió en **OBS Studio** como
+"UVC Camera". OBS muestra el stream en vivo con normalidad: una imagen con paleta de
+color (verde para zonas, magenta para contornos de manos) **compuesta en dos mitades
+apiladas**, la inferior con **dos copias adicionales más pequeñas y relleno gris**. Esta
+composición coincide visualmente con el formato `96×176 YUYV422` descrito en la sección
+13.5 (DOCUMENTADO por `kuczy`), ahora **CONFIRMADO** visualmente con nuestra propia
+unidad: el GW192A sí transmite ese compuesto de forma real y reproducible.
+
+**Fallo observado en la app Android (POCO F7):** al negociar el streaming, el
+dispositivo acepta `SET_CUR(VS_PROBE_CONTROL)` pero `GET_CUR(VS_PROBE_CONTROL)` **no
+devuelve una respuesta UVC válida** (la app lo reportaba como error y detenía la
+negociación). Esto es coherente con que el driver UVC de Windows **sí** logra
+reproducir el stream: los drivers UVC de escritorio son tolerantes a implementaciones
+parciales del estándar y pueden continuar la negociación sin depender de que el
+dispositivo responda `GET_CUR` correctamente.
+
+**Corrección aplicada (sin inventar protocolo):** cuando `GET_CUR(Probe)` falla, la
+app ahora reutiliza como "negociado" el mismo struct `VideoProbeCommitControl` que
+**ella misma propuso** en el `SET_CUR(Probe)` anterior (ver
+`UvcControlRequests.requestAsResult`), y continúa con `SET_CUR(VS_COMMIT_CONTROL)`
+usando ese struct. Esto sigue pidiendo exactamente el `formatIndex`/`frameIndex` que
+el propio dispositivo declaró en sus descriptors (sección 13 anterior) — no es una
+suposición sobre el protocolo, es una tolerancia estándar ante un `GET_CUR` no
+implementado, equivalente a lo que ya hace el driver UVC de Windows con este mismo
+hardware.
+
+**Estado:** corregido en código; pendiente de volver a probar en POCO F7 + GW192A para
+confirmar si, superado el `GET_CUR`, el `SET_CUR(Commit)` y la lectura por bulk
+transfer completan la negociación y entregan frames reales.

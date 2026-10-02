@@ -131,21 +131,40 @@ class UvcStreamingSession(
         //    dispositivo realmente aceptó/ajustó (tamaño máximo de frame, etc.).
         val probeResponse = ByteArray(UvcControlRequests.PROBE_COMMIT_LENGTH)
         val gotProbe = controlTransferIn(vs.id, UvcControlRequests.GET_CUR, UvcControlRequests.VS_PROBE_CONTROL, probeResponse)
-        val negotiated = if (gotProbe) UvcControlRequests.parseProbeCommitResponse(probeResponse) else null
-        if (negotiated == null) {
+        // Buffer que se reenviará en el Commit: la respuesta real del
+        // dispositivo si GET_CUR funcionó, o nuestra propia propuesta en caso
+        // contrario (ver UvcControlRequests.requestAsResult — tolerancia
+        // necesaria para hardware que no implementa bien GET_CUR, como el
+        // GW192A real; confirmado funcional con el driver UVC de Windows).
+        val commitBuffer: ByteArray
+        val negotiated = if (gotProbe) {
+            UvcControlRequests.parseProbeCommitResponse(probeResponse)
+        } else {
+            null
+        }
+        if (negotiated != null) {
+            commitBuffer = probeResponse
+            Log.i(TAG, "Probe negociado (GET_CUR OK): formatIdx=${negotiated.formatIndex} " +
+                "frameIdx=${negotiated.frameIndex} maxFrameSize=${negotiated.maxVideoFrameSize} " +
+                "maxPayload=${negotiated.maxPayloadTransferSize}")
+        } else {
+            Log.w(TAG, "GET_CUR(Probe) no devolvió respuesta válida (gotProbe=$gotProbe); " +
+                "usando la propuesta propia como fallback tolerante (ver docs §13.6)")
+            commitBuffer = probeRequest
+        }
+        val effective = negotiated ?: UvcControlRequests.requestAsResult(probeRequest)
+        if (effective == null) {
             connection.releaseInterface(vs)
-            onError("GET_CUR(Probe) no devolvió una respuesta UVC válida (gotProbe=$gotProbe)")
+            onError("No se pudo determinar un struct Probe/Commit válido para negociar")
             return false
         }
-        Log.i(TAG, "Probe negociado: formatIdx=${negotiated.formatIndex} frameIdx=${negotiated.frameIndex} " +
-            "maxFrameSize=${negotiated.maxVideoFrameSize} maxPayload=${negotiated.maxPayloadTransferSize}")
 
         // 3) SET_CUR sobre VS_COMMIT_CONTROL: confirmar el formato negociado.
         val commitOk = controlTransferOut(
             vs.id,
             UvcControlRequests.SET_CUR,
             UvcControlRequests.VS_COMMIT_CONTROL,
-            probeResponse, // se re-envía el struct devuelto por el dispositivo, como exige la spec
+            commitBuffer,
         )
         if (!commitOk) {
             connection.releaseInterface(vs)
@@ -153,8 +172,8 @@ class UvcStreamingSession(
             return false
         }
 
-        val maxFrameSize = if (negotiated.maxVideoFrameSize > 0) {
-            negotiated.maxVideoFrameSize.toInt()
+        val maxFrameSize = if (effective.maxVideoFrameSize > 0) {
+            effective.maxVideoFrameSize.toInt()
         } else {
             expectedWidth * expectedHeight * 2 // fallback: estimación YUY2 (2 bytes/px)
         }
