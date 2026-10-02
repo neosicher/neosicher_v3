@@ -52,6 +52,35 @@ class UvcStreamingSession(
         frameIntervalUnits: Long,
         expectedWidth: Int,
         expectedHeight: Int,
+        onNegotiated: () -> Unit,
+        onFrame: (bytes: ByteArray, width: Int, height: Int) -> Unit,
+        onError: (String) -> Unit,
+    ): Boolean {
+        // Todo el proceso de negociación se envuelve en try/catch: cualquier
+        // excepción inesperada (p. ej. IllegalStateException, SecurityException
+        // si el permiso USB se revoca a mitad de camino) se convierte en un
+        // error explícito en vez de propagarse silenciosamente y dejar la UI
+        // "congelada" sin ninguna explicación.
+        return try {
+            startInternal(
+                formatIndex, frameIndex, frameIntervalUnits,
+                expectedWidth, expectedHeight, onNegotiated, onFrame, onError,
+            )
+        } catch (t: Throwable) {
+            Log.e(TAG, "Excepción durante negociación UVC", t)
+            onError("Excepción durante negociación UVC: ${t.javaClass.simpleName}: ${t.message}")
+            runCatching { vsInterface?.let { connection.releaseInterface(it) } }
+            false
+        }
+    }
+
+    private fun startInternal(
+        formatIndex: Int,
+        frameIndex: Int,
+        frameIntervalUnits: Long,
+        expectedWidth: Int,
+        expectedHeight: Int,
+        onNegotiated: () -> Unit,
         onFrame: (bytes: ByteArray, width: Int, height: Int) -> Unit,
         onError: (String) -> Unit,
     ): Boolean {
@@ -61,7 +90,7 @@ class UvcStreamingSession(
             return false
         }
         if (!connection.claimInterface(vs, true)) {
-            onError("No se pudo reclamar la interfaz VideoStreaming")
+            onError("No se pudo reclamar la interfaz VideoStreaming (¿en uso por otra app/proceso?)")
             return false
         }
         vsInterface = vs
@@ -94,7 +123,7 @@ class UvcStreamingSession(
         )
         if (!setProbeOk) {
             connection.releaseInterface(vs)
-            onError("SET_CUR(Probe) rechazado por el dispositivo")
+            onError("SET_CUR(Probe) rechazado por el dispositivo (formatIdx=$formatIndex frameIdx=$frameIndex)")
             return false
         }
 
@@ -105,7 +134,7 @@ class UvcStreamingSession(
         val negotiated = if (gotProbe) UvcControlRequests.parseProbeCommitResponse(probeResponse) else null
         if (negotiated == null) {
             connection.releaseInterface(vs)
-            onError("GET_CUR(Probe) no devolvió una respuesta UVC válida")
+            onError("GET_CUR(Probe) no devolvió una respuesta UVC válida (gotProbe=$gotProbe)")
             return false
         }
         Log.i(TAG, "Probe negociado: formatIdx=${negotiated.formatIndex} frameIdx=${negotiated.frameIndex} " +
@@ -130,9 +159,21 @@ class UvcStreamingSession(
             expectedWidth * expectedHeight * 2 // fallback: estimación YUY2 (2 bytes/px)
         }
 
+        // Negociación completada con éxito: se notifica de forma SÍNCRONA,
+        // antes de lanzar el hilo de lectura. Esto evita una condición de
+        // carrera donde el hilo de lectura podría reportar un error (p. ej.
+        // timeout) y el llamador sobrescribirlo igualmente con "éxito" al
+        // procesar el valor de retorno de start() después.
+        onNegotiated()
+
         running.set(true)
         thread = Thread {
-            readLoop(endpoint, maxFrameSize, expectedWidth, expectedHeight, onFrame, onError)
+            try {
+                readLoop(endpoint, maxFrameSize, expectedWidth, expectedHeight, onFrame, onError)
+            } catch (t: Throwable) {
+                Log.e(TAG, "Excepción no capturada en el hilo de lectura UVC", t)
+                onError("Excepción en lectura de stream: ${t.javaClass.simpleName}: ${t.message}")
+            }
         }.apply {
             name = "NeoUvcStreamThread"
             isDaemon = true
@@ -279,8 +320,8 @@ class UvcStreamingSession(
 
     companion object {
         private const val TAG = "NeoUvcStream"
-        private const val TRANSFER_TIMEOUT_MS = 2000
-        private const val MAX_CONSECUTIVE_TIMEOUTS = 20
+        private const val TRANSFER_TIMEOUT_MS = 1000
+        private const val MAX_CONSECUTIVE_TIMEOUTS = 8
         private const val UVC_CLASS_VIDEO = 14
         private const val UVC_SUBCLASS_STREAMING = 2
     }

@@ -59,6 +59,8 @@ class Gw192aThermalCameraDataSource(
     private var streamingConnection: UsbDeviceConnection? = null
     private var streamingSession: UvcStreamingSession? = null
     private var currentFormat: com.neosicher.app.usb.UvcFormatDescriptor? = null
+    private var framesReceivedSinceStart = 0
+    private var watchdogJob: kotlinx.coroutines.Job? = null
 
     init {
         // Escuchamos los eventos de permiso del gestor USB.
@@ -206,6 +208,20 @@ class Gw192aThermalCameraDataSource(
      * En todos los casos se guarda [uvcInfo] en el estado para diagnóstico.
      */
     private fun attemptStartStreaming(device: UsbDevice) {
+        try {
+            attemptStartStreamingInternal(device)
+        } catch (t: Throwable) {
+            Log.e(TAG, "Excepción inesperada iniciando streaming", t)
+            _state.value = _state.value.copy(
+                status = ThermalConnectionStatus.READY,
+                message = "GW192A conectado · Stream térmico no disponible",
+                errorDetail = "Excepción inesperada: ${t.javaClass.simpleName}: ${t.message}",
+            )
+            cleanupStreaming()
+        }
+    }
+
+    private fun attemptStartStreamingInternal(device: UsbDevice) {
         val uvcResult = usbManager.readUvcDescriptors(device)
         if (uvcResult == null) {
             _state.value = _state.value.copy(
@@ -245,6 +261,7 @@ class Gw192aThermalCameraDataSource(
 
         val (format, frame) = chosen
         currentFormat = format
+        framesReceivedSinceStart = 0
         Log.i(TAG, "Intentando streaming UVC: formatIdx=${format.formatIndex} " +
             "frameIdx=${frame.frameIndex} ${frame.widthPx}x${frame.heightPx} " +
             "fourCc=${format.fourCc} kind=${format.kind}")
@@ -257,27 +274,55 @@ class Gw192aThermalCameraDataSource(
             frameIntervalUnits = frame.defaultFrameIntervalUnits,
             expectedWidth = frame.widthPx,
             expectedHeight = frame.heightPx,
+            onNegotiated = {
+                // Se llama de forma SÍNCRONA en el hilo que invocó start(),
+                // justo tras aceptar el Probe/Commit. Evita la carrera entre
+                // "negociación OK" y un posible error reportado por el hilo
+                // de lectura antes de que actualicemos el estado.
+                _state.value = _state.value.copy(
+                    status = ThermalConnectionStatus.STREAMING,
+                    message = "GW192A · Negociado, esperando frames…",
+                    errorDetail = null,
+                )
+                startNoFrameWatchdog(frame.widthPx, frame.heightPx)
+            },
             onFrame = { bytes, width, height -> onRawFrame(bytes, width, height) },
             onError = { message -> onStreamingError(message) },
         )
 
         if (!started) {
-            _state.value = _state.value.copy(
-                status = ThermalConnectionStatus.READY,
-                message = "GW192A conectado · Stream térmico no disponible",
-            )
+            // Si start() devuelve false, onError ya fue invocado dentro con
+            // el detalle correspondiente (o la excepción se capturó arriba).
             cleanupStreaming()
-        } else {
-            _state.value = _state.value.copy(
-                status = ThermalConnectionStatus.STREAMING,
-                message = "GW192A · Stream experimental activo (sin calibrar)",
-                errorDetail = null,
-            )
+        }
+    }
+
+    /**
+     * Si tras negociar el stream no llega NINGÚN frame interpretable en un
+     * tiempo razonable, se reporta como error honesto en vez de dejar la UI
+     * mostrando el mensaje genérico de "sin confirmar protocolo" sin ninguna
+     * pista. Esto puede pasar, por ejemplo, si el endpoint bulk no entrega
+     * datos pese a que la negociación de control fue aceptada.
+     */
+    private fun startNoFrameWatchdog(width: Int, height: Int) {
+        watchdogJob?.cancel()
+        watchdogJob = scope.launch {
+            kotlinx.coroutines.delay(6000)
+            if (_state.value.status == ThermalConnectionStatus.STREAMING && framesReceivedSinceStart == 0) {
+                Log.w(TAG, "Watchdog: 6s sin ningún frame interpretable tras negociar (${width}x$height)")
+                onStreamingError(
+                    "El dispositivo aceptó la negociación UVC pero no llegó ningún frame " +
+                        "interpretable en 6s (formato ${width}x$height). Puede que el endpoint " +
+                        "bulk no esté entregando datos, o que el formato elegido no sea el correcto."
+                )
+            }
         }
     }
 
     private fun onRawFrame(bytes: ByteArray, width: Int, height: Int) {
         val format = currentFormat
+        Log.d(TAG, "Frame crudo recibido: ${bytes.size} bytes, declarado ${width}x$height, " +
+            "formato=${format?.fourCc}")
         val result = when {
             // Caso excepcional: el formato elegido fue el candidato de doble
             // altura (solo ocurre si no había ninguna otra opción disponible).
@@ -288,7 +333,15 @@ class Gw192aThermalCameraDataSource(
             else -> null
         }
         if (result != null) {
-            _state.value = _state.value.copy(lastFrame = result)
+            framesReceivedSinceStart++
+            watchdogJob?.cancel()
+            _state.value = _state.value.copy(
+                lastFrame = result,
+                message = "GW192A · Stream experimental activo (sin calibrar)",
+            )
+        } else {
+            Log.w(TAG, "Frame recibido (${bytes.size}B) pero no se pudo interpretar " +
+                "(formato=${format?.fourCc}, ${width}x$height) — tamaño insuficiente o FourCC no soportado")
         }
         // Se mantiene _reading.value = ThermalReading.NONE deliberadamente:
         // no hay temperatura calibrada en °C que reportar como VitalSigns/
@@ -308,6 +361,8 @@ class Gw192aThermalCameraDataSource(
     }
 
     private fun cleanupStreaming() {
+        watchdogJob?.cancel()
+        watchdogJob = null
         streamingSession?.stop()
         streamingSession = null
         streamingConnection?.let { runCatching { it.close() } }
