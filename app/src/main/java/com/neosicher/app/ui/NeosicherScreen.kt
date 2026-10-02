@@ -8,25 +8,31 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.neosicher.app.camera.CameraManager
 import com.neosicher.app.ui.components.CameraPreviewPanel
 import com.neosicher.app.ui.components.CameraSwitchButton
+import com.neosicher.app.ui.components.HeartRateCard
 import com.neosicher.app.ui.components.MonitoringPanel
 import com.neosicher.app.ui.components.NeosicherModeSelector
 import com.neosicher.app.ui.components.NeosicherTopBar
+import com.neosicher.app.ui.components.RespiratoryRateCard
+import com.neosicher.app.ui.components.SleepCard
+import com.neosicher.app.ui.components.TemperatureCard
 import com.neosicher.app.ui.components.UsbDiagnosticsPanel
 import com.neosicher.app.ui.theme.NeoColors
 import com.neosicher.app.ui.theme.NeoDimens
@@ -67,15 +73,15 @@ fun NeosicherScreen(
         // (p. ej. pantalla de cobertura de un plegable).
         val wide = this.maxWidth >= 480.dp
 
-        // Aplicar los insets del sistema (barra de estado, notch, barra de
-        // navegación/gestos). Sin esto, al usar edge-to-edge el contenido se
-        // dibuja DEBAJO de la barra de estado y esta "roba" los toques del
-        // selector superior. windowInsetsPadding(safeDrawing) desplaza todo el
-        // contenido al área segura.
+        // La app corre en modo inmersivo (barras del sistema ocultas, ver
+        // MainActivity.enableImmersiveMode), por lo que tiene prioridad total
+        // sobre la pantalla. Se añade un pequeño padding de seguridad solo para
+        // el notch/cutout, de modo que el contenido no quede bajo una muesca,
+        // sin reservar espacio para barras que ya no se muestran.
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .windowInsetsPadding(WindowInsets.safeDrawing)
+                .windowInsetsPadding(WindowInsets.displayCutout)
         ) {
             NeosicherTopBar(
                 mode = state.cameraMode,
@@ -116,7 +122,12 @@ fun NeosicherScreen(
     }
 }
 
-/** Composición horizontal tipo dashboard: ~70% cámara / ~30% panel. */
+/**
+ * Composición horizontal: visor de cámara grande arriba y una **fila
+ * horizontal** con las cuatro tarjetas de métricas abajo, siempre visibles sin
+ * necesidad de hacer scroll. El botón de cambio de cámara va a la derecha de
+ * las tarjetas.
+ */
 @Composable
 private fun WideContent(
     state: NeosicherUiState,
@@ -127,10 +138,11 @@ private fun WideContent(
     onFullscreen: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Row(
+    Column(
         modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(NeoDimens.PanelGap),
+        verticalArrangement = Arrangement.spacedBy(NeoDimens.PanelGap),
     ) {
+        // Visor de cámara: ocupa la mayor parte de la altura disponible.
         CameraPreviewPanel(
             mode = state.cameraMode,
             cameraManager = cameraManager,
@@ -139,40 +151,60 @@ private fun WideContent(
             onRequestCameraPermission = onRequestCameraPermission,
             onFullscreen = onFullscreen,
             modifier = Modifier
-                .weight(0.7f)
-                .fillMaxHeight(),
+                .fillMaxWidth()
+                .weight(1f),
         )
 
-        Column(
-            modifier = Modifier
-                .weight(0.3f)
-                .fillMaxHeight(),
-            verticalArrangement = Arrangement.spacedBy(NeoDimens.CardGap),
-        ) {
-            MonitoringPanel(
-                thermalReading = state.thermalReading,
-                vitalSigns = state.vitalSigns,
-                sleepStatus = state.sleepStatus,
-                twoColumns = false,
-                modifier = Modifier.weight(1f, fill = false),
+        // Fila horizontal de métricas: las 4 tarjetas siempre visibles.
+        MonitoringRow(
+            state = state,
+            modifier = Modifier.fillMaxWidth(),
+        )
+
+        if (state.showDiagnostics) {
+            UsbDiagnosticsPanel(
+                thermalState = state.thermalState,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 220.dp),
             )
+        }
 
-            if (state.showDiagnostics) {
-                UsbDiagnosticsPanel(
-                    thermalState = state.thermalState,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-
-            Spacer(Modifier.weight(1f))
-
-            DiagnosticsToggle(state.showDiagnostics, onToggleDiagnostics)
+        // Barra inferior: toggle de diagnóstico + botón de cambio de cámara.
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(NeoDimens.CardGap),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            DiagnosticsToggle(
+                shown = state.showDiagnostics,
+                onClick = onToggleDiagnostics,
+                modifier = Modifier.weight(0.4f),
+            )
             CameraSwitchButton(
                 targetMode = targetMode(state.cameraMode),
                 label = switchLabel(state.cameraMode),
                 onClick = onToggleMode,
+                modifier = Modifier.weight(0.6f),
             )
         }
+    }
+}
+
+/** Fila horizontal con las cuatro tarjetas de métricas, repartidas por igual. */
+@Composable
+private fun MonitoringRow(
+    state: NeosicherUiState,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(NeoDimens.CardGap),
+    ) {
+        TemperatureCard(state.thermalReading, Modifier.weight(1f))
+        HeartRateCard(state.vitalSigns.heartRate, Modifier.weight(1f))
+        RespiratoryRateCard(state.vitalSigns.respiratoryRate, Modifier.weight(1f))
+        SleepCard(state.sleepStatus, Modifier.weight(1f))
     }
 }
 
@@ -237,15 +269,14 @@ private fun NarrowContent(
 }
 
 @Composable
-private fun DiagnosticsToggle(shown: Boolean, onClick: () -> Unit) {
+private fun DiagnosticsToggle(shown: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
     Text(
         text = if (shown) "Ocultar diagnóstico USB" else "Mostrar diagnóstico USB",
         color = NeoColors.Accent,
         style = MaterialTheme.typography.labelMedium,
-        modifier = Modifier
-            .fillMaxWidth()
+        modifier = modifier
             .clickable(onClick = onClick)
-            .padding(vertical = 4.dp),
+            .padding(vertical = 8.dp),
         textAlign = TextAlign.Center,
     )
 }

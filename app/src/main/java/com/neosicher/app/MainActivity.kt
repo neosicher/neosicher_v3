@@ -4,12 +4,14 @@ import android.Manifest
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
@@ -26,7 +28,10 @@ class MainActivity : ComponentActivity() {
     @OptIn(ExperimentalPermissionsApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        // Modo inmersivo: la app tiene prioridad total sobre las barras del
+        // sistema (estado y navegación). Se ocultan y solo reaparecen con un
+        // gesto deslizante temporal del usuario (BEHAVIOR_SHOW_TRANSIENT_BARS).
+        enableImmersiveMode()
         setContent {
             NeosicherTheme {
                 Surface(
@@ -65,5 +70,22 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        // Re-aplicar el modo inmersivo al recuperar el foco (el sistema puede
+        // restaurar las barras tras un diálogo de permiso, notificación, etc.).
+        if (hasFocus) enableImmersiveMode()
+    }
+
+    private fun enableImmersiveMode() {
+        // El contenido ocupa toda la pantalla, por debajo de donde estaban las
+        // barras del sistema.
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        val controller = WindowInsetsControllerCompat(window, window.decorView)
+        controller.hide(WindowInsetsCompat.Type.systemBars())
+        controller.systemBarsBehavior =
+            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
     }
 }
