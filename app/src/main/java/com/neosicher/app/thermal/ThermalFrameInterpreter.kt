@@ -60,6 +60,28 @@ object ThermalFrameInterpreter {
     }
 
     /**
+     * Interpreta un frame UVC "normal" (no doble altura) decodificándolo como
+     * YUYV y mostrándolo tal cual. Es útil para dispositivos como el GW192A que
+     * entregan la imagen térmica ya coloreada por el propio hardware (14
+     * paletas, según el fabricante) a través de un stream UVC estándar.
+     *
+     * No se inventa nada: se muestra el vídeo real transmitido. No hay datos
+     * térmicos crudos separados, por lo que rawMin/rawMax quedan en null.
+     */
+    fun interpretVisibleFrame(frameBytes: ByteArray, width: Int, height: Int): ThermalFrameResult? {
+        if (width <= 0 || height <= 0) return null
+        val expected = width * height * 2 // YUYV = 2 bytes/píxel
+        if (frameBytes.size < expected) return null
+        val visibleBitmap = YuyvDecoder.decode(frameBytes, width, height)
+        return ThermalFrameResult(
+            visibleBitmap = visibleBitmap,
+            thermalPaletteBitmap = null,
+            rawMin = null,
+            rawMax = null,
+        )
+    }
+
+    /**
      * Lee la mitad "térmica" como muestras raw16 little-endian (hipótesis,
      * NO confirmada) y genera una paleta de calor **normalizada dentro del
      * propio frame** (min→azul, max→rojo). No representa °C.

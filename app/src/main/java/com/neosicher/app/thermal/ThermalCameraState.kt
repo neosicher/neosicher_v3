@@ -1,6 +1,7 @@
 package com.neosicher.app.thermal
 
 import com.neosicher.app.usb.UsbDeviceInfo
+import com.neosicher.app.usb.UvcParseResult
 
 /**
  * Estado del ciclo de vida de la cámara térmica GW192A.
@@ -68,6 +69,12 @@ data class ThermalCameraState(
     val errorDetail: String? = null,
     /** Último frame interpretado (solo cuando status == STREAMING). EXPERIMENTAL. */
     val lastFrame: ThermalFrameResult? = null,
+    /**
+     * Resultado del parseo de descriptors UVC crudos (formatos/resoluciones
+     * declarados por el dispositivo). Fundamental para la investigación: deja
+     * ver qué expone realmente el GW192A. Ver docs/GW192A_INVESTIGACION.md §13.
+     */
+    val uvcInfo: UvcParseResult? = null,
 ) {
     val isDeviceKnown: Boolean get() = deviceInfo != null
 

@@ -80,6 +80,25 @@ fun UsbDiagnosticsPanel(
         } else {
             DeviceDetails(info)
         }
+
+        // Formatos/resoluciones UVC declarados (evidencia clave para saber qué
+        // expone realmente el dispositivo y cómo iniciar el stream).
+        thermalState.uvcInfo?.let { uvc ->
+            SectionText("── UVC: VideoControl=${uvc.videoControlInterfaceFound} · " +
+                "formatos=${uvc.streamingFormats.size} ──")
+            if (uvc.streamingFormats.isEmpty()) {
+                SectionText("  (el dispositivo no declaró formatos VS_FORMAT/VS_FRAME)")
+            }
+            uvc.streamingFormats.forEach { fmt ->
+                SectionText("  Formato ${fmt.kind} idx=${fmt.formatIndex} " +
+                    (fmt.guidHex?.let { "guid=$it " } ?: "") +
+                    (fmt.bitsPerPixel?.let { "bpp=$it" } ?: ""))
+                fmt.frames.forEach { fr ->
+                    SectionText("    Frame idx=${fr.frameIndex} ${fr.widthPx}x${fr.heightPx} " +
+                        "~${"%.0f".format(fr.approxFps)}fps")
+                }
+            }
+        }
     }
 }
 

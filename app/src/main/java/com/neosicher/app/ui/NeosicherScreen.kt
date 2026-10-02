@@ -7,11 +7,14 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -64,7 +67,16 @@ fun NeosicherScreen(
         // (p. ej. pantalla de cobertura de un plegable).
         val wide = this.maxWidth >= 480.dp
 
-        Column(modifier = Modifier.fillMaxSize()) {
+        // Aplicar los insets del sistema (barra de estado, notch, barra de
+        // navegación/gestos). Sin esto, al usar edge-to-edge el contenido se
+        // dibuja DEBAJO de la barra de estado y esta "roba" los toques del
+        // selector superior. windowInsetsPadding(safeDrawing) desplaza todo el
+        // contenido al área segura.
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.safeDrawing)
+        ) {
             NeosicherTopBar(
                 mode = state.cameraMode,
                 onModeSelected = onModeSelected,

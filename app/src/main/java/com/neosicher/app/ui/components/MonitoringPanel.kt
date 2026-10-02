@@ -22,34 +22,27 @@ fun MonitoringPanel(
     thermalReading: ThermalReading,
     vitalSigns: VitalSigns,
     sleepStatus: SleepStatus,
-    twoColumns: Boolean,
+    @Suppress("UNUSED_PARAMETER") twoColumns: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    if (twoColumns) {
-        Column(
-            modifier = modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(NeoDimens.CardGap),
-        ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(NeoDimens.CardGap)) {
-                TemperatureCard(thermalReading, Modifier.weight(1f))
-                HeartRateCard(vitalSigns.heartRate, Modifier.weight(1f))
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(NeoDimens.CardGap)) {
-                RespiratoryRateCard(vitalSigns.respiratoryRate, Modifier.weight(1f))
-                SleepCard(sleepStatus, Modifier.weight(1f))
-            }
+    // Siempre en cuadrícula 2x2: en horizontal (panel lateral estrecho) esto
+    // garantiza que las CUATRO tarjetas (Temperatura, Frecuencia cardiaca,
+    // Frecuencia respiratoria, Tiempo de sueño) sean visibles sin depender del
+    // scroll. Se mantiene un scroll vertical como red de seguridad en pantallas
+    // de muy poca altura. [twoColumns] se conserva por compatibilidad de firma.
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(NeoDimens.CardGap),
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(NeoDimens.CardGap)) {
+            TemperatureCard(thermalReading, Modifier.weight(1f))
+            HeartRateCard(vitalSigns.heartRate, Modifier.weight(1f))
         }
-    } else {
-        Column(
-            modifier = modifier
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(NeoDimens.CardGap),
-        ) {
-            TemperatureCard(thermalReading, Modifier.fillMaxWidth())
-            HeartRateCard(vitalSigns.heartRate, Modifier.fillMaxWidth())
-            RespiratoryRateCard(vitalSigns.respiratoryRate, Modifier.fillMaxWidth())
-            SleepCard(sleepStatus, Modifier.fillMaxWidth())
+        Row(horizontalArrangement = Arrangement.spacedBy(NeoDimens.CardGap)) {
+            RespiratoryRateCard(vitalSigns.respiratoryRate, Modifier.weight(1f))
+            SleepCard(sleepStatus, Modifier.weight(1f))
         }
     }
 }

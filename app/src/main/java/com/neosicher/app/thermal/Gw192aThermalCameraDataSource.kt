@@ -53,6 +53,7 @@ class Gw192aThermalCameraDataSource(
     private var currentDevice: UsbDevice? = null
     private var streamingConnection: UsbDeviceConnection? = null
     private var streamingSession: UvcStreamingSession? = null
+    private var currentFrameIsDoubleHeight: Boolean = false
 
     init {
         // Escuchamos los eventos de permiso del gestor USB.
@@ -186,10 +187,19 @@ class Gw192aThermalCameraDataSource(
     }
 
     /**
-     * Intenta iniciar el streaming real solo si los descriptors UVC del
-     * propio dispositivo declaran un frame consistente con la hipótesis de
-     * doble altura (ver docs/GW192A_INVESTIGACION.md §13). Si no, se detiene
-     * en READY con un mensaje honesto — nunca se simula un stream.
+     * Intenta iniciar el streaming UVC real del dispositivo.
+     *
+     * Estrategia (basada en evidencia, no en suposiciones):
+     *  - Primero se prefiere un frame "doble altura" (visible + térmico crudo),
+     *    si los descriptors lo declaran (ver docs §13).
+     *  - Si no existe, pero el dispositivo SÍ declara algún otro frame UVC
+     *    válido, se intenta abrir ESE formato y mostrar el vídeo tal cual.
+     *    El GW192A anuncia 14 paletas de color: es muy posible que entregue la
+     *    imagen térmica ya coloreada como un stream UVC normal. Mostrar ese
+     *    vídeo no inventa nada: es exactamente lo que el dispositivo transmite.
+     *  - Si no declara ningún frame, se detiene en READY de forma honesta.
+     *
+     * En todos los casos se guarda [uvcInfo] en el estado para diagnóstico.
      */
     private fun attemptStartStreaming(device: UsbDevice) {
         val uvcResult = usbManager.readUvcDescriptors(device)
@@ -201,16 +211,29 @@ class Gw192aThermalCameraDataSource(
             return
         }
 
-        val candidatePair = uvcResult.doubleHeightCandidatesWithFormat.firstOrNull()
-        if (!uvcResult.videoControlInterfaceFound || candidatePair == null) {
-            Log.i(TAG, "Descriptors UVC no confirman formato de doble altura. " +
+        // Guardar la info UVC siempre, para que el diagnóstico muestre los
+        // formatos/resoluciones reales que declara este dispositivo.
+        _state.value = _state.value.copy(uvcInfo = uvcResult)
+
+        // 1) Preferencia: frame de doble altura (visible + térmico crudo).
+        val doubleHeight = uvcResult.doubleHeightCandidatesWithFormat.firstOrNull()
+        // 2) Alternativa: cualquier otro frame UVC válido declarado.
+        val anyFrame = uvcResult.streamingFormats
+            .flatMap { fmt -> fmt.frames.map { fr -> fmt to fr } }
+            .firstOrNull()
+
+        val chosen = doubleHeight ?: anyFrame
+        val isDoubleHeight = doubleHeight != null
+
+        if (chosen == null) {
+            Log.i(TAG, "Descriptors UVC sin frames declarados. " +
                 "videoControlFound=${uvcResult.videoControlInterfaceFound} " +
                 "formatos=${uvcResult.streamingFormats.size}")
             _state.value = _state.value.copy(
                 status = ThermalConnectionStatus.READY,
                 message = "GW192A conectado · Stream térmico no disponible",
-                errorDetail = "Los descriptors UVC no declaran un formato reconocible " +
-                    "(no se confirma la hipótesis de doble altura para este dispositivo)",
+                errorDetail = "Los descriptors UVC no declaran ningún formato de vídeo " +
+                    "reconocible en este dispositivo",
             )
             return
         }
@@ -225,7 +248,11 @@ class Gw192aThermalCameraDataSource(
         }
         streamingConnection = connection
 
-        val (format, frame) = candidatePair
+        val (format, frame) = chosen
+        currentFrameIsDoubleHeight = isDoubleHeight
+        Log.i(TAG, "Intentando streaming UVC: formatIdx=${format.formatIndex} " +
+            "frameIdx=${frame.frameIndex} ${frame.widthPx}x${frame.heightPx} " +
+            "dobleAltura=$isDoubleHeight")
         val session = UvcStreamingSession(connection, device)
         streamingSession = session
 
@@ -255,7 +282,16 @@ class Gw192aThermalCameraDataSource(
     }
 
     private fun onRawFrame(bytes: ByteArray, width: Int, height: Int) {
-        val result = ThermalFrameInterpreter.interpretDoubleHeightFrame(bytes, width, height)
+        val result = if (currentFrameIsDoubleHeight) {
+            // Frame doble altura: mitad visible + mitad térmica cruda.
+            ThermalFrameInterpreter.interpretDoubleHeightFrame(bytes, width, height)
+        } else {
+            // Frame UVC normal: lo mostramos tal cual lo entrega el dispositivo
+            // (p. ej. imagen térmica ya coloreada por el propio GW192A). No se
+            // inventa nada: es el vídeo real transmitido. Se marca igualmente
+            // como experimental porque no hay temperatura calibrada.
+            ThermalFrameInterpreter.interpretVisibleFrame(bytes, width, height)
+        }
         if (result != null) {
             _state.value = _state.value.copy(lastFrame = result)
         }
