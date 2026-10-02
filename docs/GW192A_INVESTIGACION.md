@@ -499,8 +499,62 @@ GW192A sin asumir que aplica de antemano.
 
 ### 13.4 Estado de verificación
 
-**NO DETERMINADO todavía.** Este parser está implementado pero su resultado contra el
-GW192A real no se ha registrado en este documento. **REQUIERE PRUEBA EN POCO F7 +
-GW192A**: ejecutar `UsbDeviceManager.readUvcDescriptors()` con el dispositivo conectado
-y anotar aquí, con la misma disciplina de evidencia de la sección 12, qué formatos y
-frames se encontraron realmente (o si no se encontró ninguno).
+Con hardware real (POCO F7 + GW192A), los descriptors UVC **no declararon** ningún
+frame de doble altura (`height == width * 2`): la app reportó *"Los descriptors UVC no
+declaran un formato reconocible (no se confirma la hipótesis de doble altura para este
+dispositivo)"*. **La hipótesis de la sección 13.2 queda DESCARTADA para el GW192A.**
+
+### 13.5 Evidencia pública de terceros con el MISMO hardware (DOCUMENTADO)
+
+Se localizó un repositorio público, independiente de este proyecto y de THG Start,
+que documenta pruebas directas sobre un **GOYOJO GW192A real** desde Windows/Python +
+OpenCV + ffmpeg:
+
+**Fuente:** [`kuczy/GOYOJO-GW192A-Thermal-Camera`](https://github.com/kuczy/GOYOJO-GW192A-Thermal-Camera)
+(repositorio público en GitHub, sin licencia explícita declarada en el repo; se cita
+aquí únicamente como evidencia de investigación, sin copiar su código en NEOSICHER).
+
+Hallazgos reportados por el autor de ese repositorio (clasificados como **DOCUMENTADO**:
+evidencia de fuente externa fiable, con el mismo modelo de hardware, pero no verificada
+directamente por nosotros en el mismo dispositivo físico que usa este proyecto):
+
+- El GW192A se anuncia y vende como cámara de **192×192 píxeles**, pero el sensor
+  óptico real es de **96×96 píxeles**. Confirmado por el autor mediante
+  `ffmpeg -list_options true -f dshow -i video="UVC Camera"` en Windows.
+- De los formatos que expone, **solo tres son reproducibles**:
+  - `96×96 NV12` — imagen en escala de grises, limpia.
+  - `96×100 YUYV422` — imagen con fuerte tinte verde, alto contraste.
+  - `96×176 YUYV422` — un **compuesto**: la imagen 96×100 más dos copias adicionales
+    más pequeñas debajo (no es "doble altura" simple en el sentido de la hipótesis
+    13.2; es una composición distinta, con contenido duplicado, no datos crudos).
+- **Ninguno de los formatos contiene datos de 16 bits en escala de grises** — es decir,
+  ningún formato transporta un mapa de temperatura radiométrico. El propio autor lo
+  intentó analizar (incluido un intento con asistencia de un LLM) sin obtener
+  información térmica adicional.
+- Sin lectura directa de temperatura, el autor solo pudo mostrar la **intensidad
+  relativa de calor en escala 0–100%** a partir del valor de gris bajo el cursor — es
+  decir, el mismo tipo de límite que ya aplicábamos en NEOSICHER por regla propia
+  (sección 6 y 14 de este documento), ahora confirmado independientemente por otra
+  persona con el mismo hardware.
+
+**Conclusión para NEOSICHER (acción tomada en el código):**
+
+- Se sustituyó la heurística de doble altura como estrategia principal por
+  `UvcParseResult.recommendedFrame`, que prioriza: 1) cualquier formato cuyo FourCC
+  (leído del GUID real de 16 bytes del descriptor UVC, no asumido) sea `NV12`; 2) el
+  formato YUYV/YUY2/UYVY de **menor resolución** disponible (para evitar elegir por
+  accidente un compuesto con copias extra, como el `96×176` descrito arriba); 3)
+  cualquier otro formato sin comprimir; 4) como último recurso, el candidato de doble
+  altura (útil solo si otra unidad/firmware sí lo implementara).
+- `ThermalFrameInterpreter.interpretFrame` decodifica el frame según el FourCC real
+  (NV12 semi-planar o YUYV empaquetado), extrae **solo la luminancia** (brillo) y
+  aplica una paleta de calor **relativa** (normalizada min–max dentro del propio
+  frame) — la misma estrategia que usa el script de referencia con `cv2.applyColorMap`.
+  **Nunca se calcula temperatura en grados**, consistente con que ni siquiera la
+  evidencia pública de terceros logró extraerla de este hardware.
+
+**REQUIERE PRUEBA EN POCO F7 + GW192A** para confirmar qué FourCC(s) y resolución(es)
+exactas declara *nuestra* unidad concreta (podría variar por lote/firmware respecto a
+la unidad documentada por `kuczy`). El panel de diagnóstico USB de la app ahora muestra
+el FourCC real y cuál frame fue elegido (`← elegido`), precisamente para registrar esa
+evidencia aquí en una próxima actualización de este documento.

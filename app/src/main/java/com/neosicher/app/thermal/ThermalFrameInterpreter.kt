@@ -2,38 +2,89 @@ package com.neosicher.app.thermal
 
 import android.graphics.Bitmap
 import android.graphics.Color
+import com.neosicher.app.usb.UvcFormatDescriptor
 import com.neosicher.app.usb.YuyvDecoder
 
 /**
- * Interpreta un frame UVC crudo del GW192A aplicando la hipótesis de
- * **"doble altura"** documentada en docs/GW192A_INVESTIGACION.md §13: la
- * mitad superior es la imagen visible (YUYV) y la mitad inferior contiene
- * datos crudos del sensor térmico.
+ * Interpreta un frame UVC crudo del GW192A según el **FourCC real** declarado
+ * por el propio dispositivo en sus descriptors (ver [UvcFormatDescriptor.fourCc]).
  *
- * Esta clase solo debe invocarse cuando [UvcParseResult] ya confirmó (por los
- * descriptors reales del dispositivo) un frame con altura = 2× ancho —
- * ver [UvcParseResult.doubleHeightCandidates]. Si esa condición no se cumplió,
- * la capa superior (ver [Gw192aThermalCameraDataSource]) no debe llamar aquí.
+ * Estrategia actualizada con evidencia pública real (ver
+ * docs/GW192A_INVESTIGACION.md §13.5): otra persona con el MISMO hardware
+ * (GOYOJO GW192A) confirmó públicamente que:
+ *  - El sensor real es 96×96 (no 192×192, pese al marketing).
+ *  - Expone NV12 96×96 (gris limpio), YUYV422 96×100 (verde alto contraste) y
+ *    YUYV422 96×176 (compuesto con copias extra, no útil).
+ *  - NINGÚN formato contiene datos de 16 bits / temperatura radiométrica.
+ *
+ * Por eso esta clase SIEMPRE produce solo una paleta de calor **relativa**
+ * (luminancia normalizada min–max del propio frame), nunca temperatura en
+ * grados. Es la misma estrategia que usan herramientas públicas de terceros
+ * para este hardware (p. ej. `cv2.applyColorMap` sobre escala de grises).
  *
  * REGLAS QUE ESTA CLASE RESPETA (docs/GW192A_INVESTIGACION.md §6, §14):
- * - NO calcula temperatura en °C: no existe calibración, emissivity ni tabla
- *   de referencia confirmada para el GW192A. Inventar una fórmula de
- *   conversión sería presentar un dato médico/técnico falso.
- * - Solo produce una **visualización de paleta de calor relativa**: normaliza
- *   los valores crudos del propio frame (min–max) y los mapea a un gradiente
- *   de color. Es una ayuda visual, no una medición.
- * - Expone los valores crudos (raw16 counts) tal cual, para que cualquier
- *   futura calibración real parta de datos honestos.
- * - Todo resultado consumido por capas superiores debe marcarse con estado
- *   EXPERIMENTAL (ver ThermalReadingStatus), nunca como lectura validada.
+ * - NO calcula temperatura en °C: no hay calibración, emissivity ni tabla de
+ *   referencia confirmada. Ni siquiera la evidencia pública de terceros con
+ *   el mismo hardware logró extraer temperatura real.
+ * - Expone los valores de luminancia (min/max) crudos para referencia, nunca
+ *   como medición.
+ * - Todo resultado se considera EXPERIMENTAL.
  */
 object ThermalFrameInterpreter {
 
     /**
-     * @param frameBytes bytes crudos completos del frame (según lo entregado
-     *   por [com.neosicher.app.usb.UvcStreamingSession]).
-     * @param width ancho negociado (p. ej. 192).
-     * @param height alto TOTAL negociado (p. ej. 384 = 2 × 192).
+     * Interpreta [frameBytes] según el FourCC real de [format] (NV12, YUY2/
+     * YUYV/UYVY, u otro). Extrae solo la luminancia y aplica una paleta de
+     * calor relativa. Si el FourCC no se reconoce, intenta YUYV como fallback
+     * razonable (es el formato UVC sin comprimir más común).
+     */
+    fun interpretFrame(
+        frameBytes: ByteArray,
+        width: Int,
+        height: Int,
+        format: UvcFormatDescriptor,
+    ): ThermalFrameResult? {
+        if (width <= 0 || height <= 0) return null
+
+        val fourCc = format.fourCc?.uppercase()
+        val luma = when {
+            fourCc?.startsWith("NV12") == true -> {
+                if (frameBytes.size < width * height) return null
+                YuyvDecoder.extractLumaNv12(frameBytes, width, height)
+            }
+            fourCc == "YUY2" || fourCc == "YUYV" || fourCc == "UYVY" || fourCc == null -> {
+                if (frameBytes.size < width * height * 2) return null
+                YuyvDecoder.extractLumaYuyv(frameBytes, width, height)
+            }
+            else -> {
+                // Formato no reconocido (p. ej. MJPEG): no se interpreta para
+                // evitar decodificar basura. Se deja sin resultado honesto.
+                return null
+            }
+        }
+
+        val heatmap = YuyvDecoder.lumaToHeatmap(luma, width, height)
+        var min = 255
+        var max = 0
+        for (v in luma) {
+            if (v < min) min = v
+            if (v > max) max = v
+        }
+
+        return ThermalFrameResult(
+            visibleBitmap = heatmap,
+            thermalPaletteBitmap = heatmap,
+            rawMin = min,
+            rawMax = max,
+        )
+    }
+
+    /**
+     * Interpreta un frame "doble altura" (mitad visible YUYV + mitad datos
+     * crudos raw16), solo para variantes de hardware/firmware donde SÍ se
+     * confirme ese patrón mediante descriptors (altura = 2× ancho). Para el
+     * GW192A esto está descartado por evidencia real (ver §13.5); se conserva
+     * como alternativa secundaria por si aplica a otra unidad/firmware.
      */
     fun interpretDoubleHeightFrame(frameBytes: ByteArray, width: Int, height: Int): ThermalFrameResult? {
         if (width <= 0 || height <= 0 || height != width * 2) return null
@@ -56,28 +107,6 @@ object ThermalFrameInterpreter {
             thermalPaletteBitmap = thermalCandidate?.bitmap,
             rawMin = thermalCandidate?.min,
             rawMax = thermalCandidate?.max,
-        )
-    }
-
-    /**
-     * Interpreta un frame UVC "normal" (no doble altura) decodificándolo como
-     * YUYV y mostrándolo tal cual. Es útil para dispositivos como el GW192A que
-     * entregan la imagen térmica ya coloreada por el propio hardware (14
-     * paletas, según el fabricante) a través de un stream UVC estándar.
-     *
-     * No se inventa nada: se muestra el vídeo real transmitido. No hay datos
-     * térmicos crudos separados, por lo que rawMin/rawMax quedan en null.
-     */
-    fun interpretVisibleFrame(frameBytes: ByteArray, width: Int, height: Int): ThermalFrameResult? {
-        if (width <= 0 || height <= 0) return null
-        val expected = width * height * 2 // YUYV = 2 bytes/píxel
-        if (frameBytes.size < expected) return null
-        val visibleBitmap = YuyvDecoder.decode(frameBytes, width, height)
-        return ThermalFrameResult(
-            visibleBitmap = visibleBitmap,
-            thermalPaletteBitmap = null,
-            rawMin = null,
-            rawMax = null,
         )
     }
 
@@ -127,13 +156,14 @@ object ThermalFrameInterpreter {
 }
 
 /**
- * Resultado de interpretar un frame de doble altura.
+ * Resultado de interpretar un frame térmico.
  *
- * @param visibleBitmap imagen visible decodificada de YUYV (mitad superior).
+ * @param visibleBitmap imagen a mostrar (en el flujo nuevo, la propia paleta
+ *   de calor; en el flujo de doble altura, la imagen visible decodificada).
  * @param thermalPaletteBitmap visualización de calor **relativa** (o null si
- *   el frame no permitió decodificarla). NO representa temperatura en °C.
- * @param rawMin / [rawMax] valores crudos (counts del sensor) mínimo y máximo
- *   del frame, sin calibrar. Útiles solo como referencia relativa.
+ *   no se pudo generar). NUNCA representa temperatura en °C.
+ * @param rawMin / [rawMax] valores de luminancia/raw crudos del frame, sin
+ *   calibrar. Solo referencia relativa, nunca medición.
  */
 data class ThermalFrameResult(
     val visibleBitmap: Bitmap,

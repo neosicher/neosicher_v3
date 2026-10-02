@@ -72,7 +72,28 @@ data class UvcFormatDescriptor(
     val guidHex: String? = null,
     val bitsPerPixel: Int? = null,
     val frames: List<UvcFrameDescriptor> = emptyList(),
-)
+) {
+    /**
+     * FourCC (p. ej. "NV12", "YUY2", "UYVY") decodificado de los primeros 4
+     * bytes del GUID de 16 bytes del descriptor UVC_FORMAT_UNCOMPRESSED/
+     * FRAME_BASED. Por especificación UVC, esos 4 bytes son el FourCC en
+     * ASCII. null si no hay GUID (p. ej. formatos MJPEG) o no es ASCII legible.
+     */
+    val fourCc: String?
+        get() {
+            val hex = guidHex ?: return null
+            if (hex.length < 8) return null
+            return try {
+                val chars = (0 until 4).map { i ->
+                    hex.substring(i * 2, i * 2 + 2).toInt(16).toChar()
+                }
+                val s = chars.joinToString("")
+                if (s.all { it.code in 32..126 }) s else null
+            } catch (e: Exception) {
+                null
+            }
+        }
+}
 
 /**
  * Resultado del parseo de los descriptors crudos de configuración.
@@ -91,23 +112,51 @@ data class UvcParseResult(
     val parseLog: List<String> = emptyList(),
 ) {
     /**
-     * HIPÓTESIS (no confirmada): un formato cuya altura declarada es
-     * exactamente el doble del ancho podría corresponder al patrón, público y
-     * documentado en proyectos open-source de terceros para módulos térmicos
-     * UVC similares (no GW192A específicamente), donde la mitad superior del
-     * frame es la imagen visible y la mitad inferior transporta datos
-     * térmicos crudos dentro del mismo stream. Esto NO está confirmado para
-     * el GW192A: requiere abrir el stream real y validar los bytes.
+     * Todos los pares (formato, frame) declarados, aplanados para elegir uno
+     * al negociar el streaming.
      */
-    val doubleHeightCandidates: List<UvcFrameDescriptor>
-        get() = streamingFormats.flatMap { it.frames }.filter { it.heightPx == it.widthPx * 2 }
+    val allFramesWithFormat: List<Pair<UvcFormatDescriptor, UvcFrameDescriptor>>
+        get() = streamingFormats.flatMap { fmt -> fmt.frames.map { fr -> fmt to fr } }
 
     /**
-     * Igual que [doubleHeightCandidates] pero conservando el formato padre de
-     * cada frame candidato (necesario para negociar el Probe/Commit con el
-     * par formatIndex/frameIndex correcto).
+     * HIPÓTESIS (no confirmada en general; descartada para el GW192A por
+     * evidencia pública de terceros con el mismo hardware — ver
+     * docs/GW192A_INVESTIGACION.md §13): un frame cuya altura es exactamente
+     * el doble del ancho podría transportar imagen visible + datos crudos.
+     * Se conserva solo como alternativa secundaria para otras variantes de
+     * firmware/hardware, nunca como primera opción.
      */
     val doubleHeightCandidatesWithFormat: List<Pair<UvcFormatDescriptor, UvcFrameDescriptor>>
-        get() = streamingFormats.flatMap { fmt -> fmt.frames.map { fr -> fmt to fr } }
-            .filter { (_, fr) -> fr.heightPx == fr.widthPx * 2 }
+        get() = allFramesWithFormat.filter { (_, fr) -> fr.heightPx == fr.widthPx * 2 }
+
+    /**
+     * Selección de formato recomendada, basada en evidencia pública real
+     * (ver docs/GW192A_INVESTIGACION.md §13.5): se prioriza el formato NV12
+     * más simple (p. ej. 96×96), luego cualquier YUYV/UNCOMPRESSED sin
+     * composición, y solo como último recurso el candidato de doble altura.
+     * Ninguna opción implica temperatura calibrada: todas son solo imagen.
+     */
+    val recommendedFrame: Pair<UvcFormatDescriptor, UvcFrameDescriptor>?
+        get() {
+            val all = allFramesWithFormat
+            if (all.isEmpty()) return null
+            // 1) NV12 (o cualquier UNCOMPRESSED cuyo FourCC sea NV12): el más
+            //    simple y limpio según evidencia real (escala de grises).
+            all.firstOrNull { (fmt, _) -> fmt.fourCc?.startsWith("NV12", ignoreCase = true) == true }
+                ?.let { return it }
+            // 2) Cualquier formato UNCOMPRESSED/FRAME_BASED con FourCC YUY2/YUYV/UYVY,
+            //    eligiendo la resolución MÁS PEQUEÑA (evita compuestos con copias extra,
+            //    como el 96x176 documentado que incluye miniaturas adicionales).
+            all.filter { (fmt, _) ->
+                val fcc = fmt.fourCc?.uppercase()
+                fcc == "YUY2" || fcc == "YUYV" || fcc == "UYVY"
+            }.minByOrNull { (_, fr) -> fr.widthPx * fr.heightPx }
+                ?.let { return it }
+            // 3) Cualquier otro UNCOMPRESSED/FRAME_BASED (resolución más pequeña).
+            all.filter { (fmt, _) -> fmt.kind == UvcFormatKind.UNCOMPRESSED || fmt.kind == UvcFormatKind.FRAME_BASED }
+                .minByOrNull { (_, fr) -> fr.widthPx * fr.heightPx }
+                ?.let { return it }
+            // 4) Último recurso: doble altura, o directamente el primero declarado.
+            return doubleHeightCandidatesWithFormat.firstOrNull() ?: all.first()
+        }
 }

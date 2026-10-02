@@ -89,13 +89,16 @@ fun UsbDiagnosticsPanel(
             if (uvc.streamingFormats.isEmpty()) {
                 SectionText("  (el dispositivo no declaró formatos VS_FORMAT/VS_FRAME)")
             }
+            val recommended = uvc.recommendedFrame
             uvc.streamingFormats.forEach { fmt ->
                 SectionText("  Formato ${fmt.kind} idx=${fmt.formatIndex} " +
-                    (fmt.guidHex?.let { "guid=$it " } ?: "") +
+                    "fourCC=${fmt.fourCc ?: "?"} " +
                     (fmt.bitsPerPixel?.let { "bpp=$it" } ?: ""))
                 fmt.frames.forEach { fr ->
+                    val isChosen = recommended?.first === fmt && recommended.second === fr
                     SectionText("    Frame idx=${fr.frameIndex} ${fr.widthPx}x${fr.heightPx} " +
-                        "~${"%.0f".format(fr.approxFps)}fps")
+                        "~${"%.0f".format(fr.approxFps)}fps" +
+                        if (isChosen) "  ← elegido" else "")
                 }
             }
         }
