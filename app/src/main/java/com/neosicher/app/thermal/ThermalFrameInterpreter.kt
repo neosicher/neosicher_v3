@@ -76,6 +76,14 @@ object ThermalFrameInterpreter {
             thermalPaletteBitmap = heatmap,
             rawMin = min,
             rawMax = max,
+            // Se conserva el array de luminancia crudo (0..255 por píxel) para
+            // que la pantalla de calibración pueda muestrear un punto exacto
+            // tocado por el usuario, y para que el ViewModel pueda leer el
+            // punto central y aplicar la calibración del usuario (ver
+            // ThermalCalibration). Nunca se usa aquí mismo para calcular °C.
+            rawLuma = luma,
+            rawWidth = width,
+            rawHeight = height,
         )
     }
 
@@ -164,10 +172,45 @@ object ThermalFrameInterpreter {
  *   no se pudo generar). NUNCA representa temperatura en °C.
  * @param rawMin / [rawMax] valores de luminancia/raw crudos del frame, sin
  *   calibrar. Solo referencia relativa, nunca medición.
+ * @param rawLuma array de luminancia (0..255) de cada píxel, fila por fila
+ *   (tamaño = rawWidth*rawHeight), o null si no aplica (p. ej. doble altura).
+ *   Permite muestrear un punto exacto para calibración manual del usuario.
+ * @param rawWidth / [rawHeight] dimensiones de [rawLuma].
  */
 data class ThermalFrameResult(
     val visibleBitmap: Bitmap,
     val thermalPaletteBitmap: Bitmap?,
     val rawMin: Int?,
     val rawMax: Int?,
-)
+    val rawLuma: IntArray? = null,
+    val rawWidth: Int = 0,
+    val rawHeight: Int = 0,
+) {
+    /**
+     * Promedio de luminancia en una pequeña ventana cuadrada centrada en el
+     * punto relativo ([u], [v] en [0,1]×[0,1] respecto al bitmap mostrado).
+     * Reduce ruido de un solo píxel. Devuelve null si no hay datos crudos.
+     */
+    fun sampleRelativePoint(u: Float, v: Float, windowRadiusPx: Int = 2): Double? {
+        val luma = rawLuma ?: return null
+        if (rawWidth <= 0 || rawHeight <= 0) return null
+        val cx = (u.coerceIn(0f, 1f) * (rawWidth - 1)).toInt()
+        val cy = (v.coerceIn(0f, 1f) * (rawHeight - 1)).toInt()
+        var sum = 0.0
+        var count = 0
+        for (dy in -windowRadiusPx..windowRadiusPx) {
+            for (dx in -windowRadiusPx..windowRadiusPx) {
+                val x = cx + dx
+                val y = cy + dy
+                if (x in 0 until rawWidth && y in 0 until rawHeight) {
+                    sum += luma[y * rawWidth + x]
+                    count++
+                }
+            }
+        }
+        return if (count > 0) sum / count else null
+    }
+
+    /** Punto central del frame (p. ej. zona de la frente si está centrada). */
+    fun sampleCenterPoint(): Double? = sampleRelativePoint(0.5f, 0.5f)
+}

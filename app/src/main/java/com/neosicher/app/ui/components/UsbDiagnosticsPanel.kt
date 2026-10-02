@@ -7,11 +7,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.Thermostat
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -38,6 +40,7 @@ import com.neosicher.app.ui.theme.NeoDimens
 fun UsbDiagnosticsPanel(
     thermalState: ThermalCameraState,
     modifier: Modifier = Modifier,
+    onOpenThermalCalibration: (() -> Unit)? = null,
 ) {
     Column(
         modifier = modifier
@@ -100,6 +103,32 @@ fun UsbDiagnosticsPanel(
                         "~${"%.0f".format(fr.approxFps)}fps" +
                         if (isChosen) "  ← elegido" else "")
                 }
+            }
+        }
+
+        // Enlace discreto a la pantalla de calibración manual (opcional, no
+        // afecta el dashboard principal). Solo visible dentro de este panel
+        // de diagnóstico, que ya está oculto por defecto.
+        if (onOpenThermalCalibration != null) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onOpenThermalCalibration)
+                    .padding(vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Icon(
+                    Icons.Filled.Thermostat,
+                    contentDescription = null,
+                    tint = NeoColors.Accent,
+                    modifier = Modifier.padding(2.dp),
+                )
+                Text(
+                    text = "Calibrar sensor térmico (avanzado)",
+                    color = NeoColors.Accent,
+                    style = MaterialTheme.typography.labelMedium,
+                )
             }
         }
     }

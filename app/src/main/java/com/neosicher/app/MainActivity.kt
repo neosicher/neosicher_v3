@@ -8,6 +8,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -20,6 +23,7 @@ import com.google.accompanist.permissions.rememberPermissionState
 import com.google.accompanist.permissions.shouldShowRationale
 import com.neosicher.app.ui.NeosicherScreen
 import com.neosicher.app.ui.NeosicherViewModel
+import com.neosicher.app.ui.ThermalCalibrationScreen
 import com.neosicher.app.ui.theme.NeoColors
 import com.neosicher.app.ui.theme.NeosicherTheme
 
@@ -40,6 +44,12 @@ class MainActivity : ComponentActivity() {
                 ) {
                     val viewModel: NeosicherViewModel = viewModel()
                     val state by viewModel.uiState.collectAsStateWithLifecycle()
+                    val calibration by viewModel.calibration.collectAsStateWithLifecycle()
+
+                    // Navegación mínima, local a esta Activity: la pantalla de
+                    // calibración es independiente del dashboard principal y
+                    // no requiere una librería de navegación completa.
+                    var showCalibration by remember { mutableStateOf(false) }
 
                     // Permiso de cámara (independiente del permiso USB).
                     val cameraPermission = rememberPermissionState(Manifest.permission.CAMERA)
@@ -56,17 +66,30 @@ class MainActivity : ComponentActivity() {
                         }
                     }
 
-                    NeosicherScreen(
-                        state = state,
-                        cameraManager = viewModel.cameraManager,
-                        onModeSelected = viewModel::selectMode,
-                        onToggleMode = viewModel::toggleMode,
-                        onRequestCameraPermission = {
-                            cameraPermission.launchPermissionRequest()
-                        },
-                        onToggleDiagnostics = viewModel::toggleDiagnostics,
-                        onFullscreen = { /* Reservado: pantalla completa en próxima iteración. */ },
-                    )
+                    if (showCalibration) {
+                        ThermalCalibrationScreen(
+                            calibration = calibration,
+                            latestRawValueProvider = viewModel::latestCenterRawValue,
+                            onSetColdPoint = viewModel::setColdCalibrationPoint,
+                            onSetHotPoint = viewModel::setHotCalibrationPoint,
+                            onSetBodyPoint = viewModel::setBodyCalibrationPoint,
+                            onClearPoint = viewModel::clearCalibrationPoint,
+                            onBack = { showCalibration = false },
+                        )
+                    } else {
+                        NeosicherScreen(
+                            state = state,
+                            cameraManager = viewModel.cameraManager,
+                            onModeSelected = viewModel::selectMode,
+                            onToggleMode = viewModel::toggleMode,
+                            onRequestCameraPermission = {
+                                cameraPermission.launchPermissionRequest()
+                            },
+                            onToggleDiagnostics = viewModel::toggleDiagnostics,
+                            onFullscreen = { /* Reservado: pantalla completa en próxima iteración. */ },
+                            onOpenThermalCalibration = { showCalibration = true },
+                        )
+                    }
                 }
             }
         }

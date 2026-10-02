@@ -11,7 +11,13 @@ import androidx.lifecycle.viewModelScope
 import com.neosicher.app.camera.CameraManager
 import com.neosicher.app.camera.CameraLens
 import com.neosicher.app.camera.CameraPermissionState
+import com.neosicher.app.monitoring.ThermalReading
+import com.neosicher.app.monitoring.ThermalReadingStatus
+import com.neosicher.app.monitoring.ThermalSource
+import com.neosicher.app.thermal.CalibrationPointKind
 import com.neosicher.app.thermal.Gw192aThermalCameraDataSource
+import com.neosicher.app.thermal.ThermalCalibration
+import com.neosicher.app.thermal.ThermalCalibrationPoint
 import com.neosicher.app.thermal.ThermalCameraRepository
 import com.neosicher.app.usb.UsbDeviceManager
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -43,6 +49,16 @@ class NeosicherViewModel(application: Application) : AndroidViewModel(applicatio
     private val _uiState = MutableStateFlow(NeosicherUiState())
     val uiState: StateFlow<NeosicherUiState> = _uiState.asStateFlow()
 
+    // Calibración del usuario (3 puntos: frío, caliente, corporal). Vive aparte
+    // de NeosicherUiState a propósito: su pantalla es independiente y no debe
+    // tocar nada del dashboard principal salvo el resultado final (ver abajo).
+    private val _calibration = MutableStateFlow(
+        ThermalCalibration(
+            bodyPoint = null, // el usuario fija el punto corporal explícitamente desde la pantalla de calibración
+        )
+    )
+    val calibration: StateFlow<ThermalCalibration> = _calibration.asStateFlow()
+
     private var batteryReceiver: BroadcastReceiver? = null
 
     init {
@@ -56,15 +72,88 @@ class NeosicherViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch {
             thermalRepository.state.collect { thermal ->
                 _uiState.update { it.copy(thermalState = thermal) }
+                // Cada frame nuevo: si hay calibración suficiente, derivar la
+                // temperatura aproximada del punto central y publicarla en la
+                // tarjeta de Temperatura, SIN tocar ningún otro componente de
+                // la interfaz. Sin calibración suficiente, se mantiene "--".
+                applyCalibrationToLatestFrame(thermal.lastFrame?.sampleCenterPoint())
             }
         }
-        // Fusionar la lectura térmica (siempre NONE en este MVP).
+        // Fusionar la lectura térmica base (siempre NONE desde la fuente: no
+        // hay protocolo radiométrico confirmado). La calibración del usuario
+        // la complementa por separado, arriba.
         viewModelScope.launch {
             thermalRepository.reading.collect { reading ->
                 _uiState.update { it.copy(thermalReading = reading) }
             }
         }
         registerBattery()
+    }
+
+    /**
+     * Si la calibración del usuario tiene suficientes puntos, convierte el
+     * valor crudo del punto central a una temperatura aproximada y actualiza
+     * SOLO el campo de temperatura del estado (no afecta cardiaca/respiratoria
+     * ni ningún otro componente visual).
+     */
+    private fun applyCalibrationToLatestFrame(centerRaw: Double?) {
+        val calib = _calibration.value
+        if (!calib.isCalibrated || centerRaw == null) {
+            if (_uiState.value.thermalReading.status != ThermalReadingStatus.NO_READING) {
+                _uiState.update {
+                    it.copy(thermalReading = ThermalReading.NONE)
+                }
+            }
+            return
+        }
+        val celsius = calib.toCelsius(centerRaw) ?: return
+        _uiState.update {
+            it.copy(
+                thermalReading = ThermalReading(
+                    temperatureCelsius = celsius,
+                    timestampMillis = System.currentTimeMillis(),
+                    confidence = if (calib.hasAssumedPoint) 0.3 else 0.6,
+                    source = ThermalSource.GW192A,
+                    // Siempre EXPERIMENTAL: es una aproximación de 2-3 puntos
+                    // sobre un sensor no radiométrico, nunca una medición
+                    // médica certificada (ver docs/GW192A_INVESTIGACION.md §6, §14).
+                    status = ThermalReadingStatus.EXPERIMENTAL,
+                )
+            )
+        }
+    }
+
+    // -- Calibración térmica (pantalla independiente) -----------------------
+
+    /** Último valor crudo (0..255) del punto central del frame actual, o null si no hay stream. */
+    fun latestCenterRawValue(): Double? = _uiState.value.thermalState.lastFrame?.sampleCenterPoint()
+
+    fun setColdCalibrationPoint(rawValue: Double, knownTemperatureCelsius: Double) {
+        _calibration.update {
+            it.copy(coldPoint = ThermalCalibrationPoint("Frío conocido", rawValue, knownTemperatureCelsius))
+        }
+    }
+
+    fun setHotCalibrationPoint(rawValue: Double, knownTemperatureCelsius: Double) {
+        _calibration.update {
+            it.copy(hotPoint = ThermalCalibrationPoint("Caliente conocido", rawValue, knownTemperatureCelsius))
+        }
+    }
+
+    fun setBodyCalibrationPoint(rawValue: Double, knownTemperatureCelsius: Double, isAssumed: Boolean) {
+        _calibration.update {
+            it.copy(bodyPoint = ThermalCalibrationPoint("Corporal", rawValue, knownTemperatureCelsius, isAssumed))
+        }
+    }
+
+    fun clearCalibrationPoint(which: CalibrationPointKind) {
+        _calibration.update {
+            when (which) {
+                CalibrationPointKind.COLD -> it.copy(coldPoint = null)
+                CalibrationPointKind.HOT -> it.copy(hotPoint = null)
+                CalibrationPointKind.BODY -> it.copy(bodyPoint = null)
+            }
+        }
     }
 
     // -- Selector de modo ---------------------------------------------------

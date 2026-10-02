@@ -59,6 +59,7 @@ fun NeosicherScreen(
     onRequestCameraPermission: () -> Unit,
     onToggleDiagnostics: () -> Unit,
     onFullscreen: () -> Unit,
+    onOpenThermalCalibration: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     BoxWithConstraints(
@@ -100,6 +101,7 @@ fun NeosicherScreen(
                     onRequestCameraPermission = onRequestCameraPermission,
                     onToggleDiagnostics = onToggleDiagnostics,
                     onFullscreen = onFullscreen,
+                    onOpenThermalCalibration = onOpenThermalCalibration,
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(NeoDimens.ScreenPadding),
@@ -113,6 +115,7 @@ fun NeosicherScreen(
                     onRequestCameraPermission = onRequestCameraPermission,
                     onToggleDiagnostics = onToggleDiagnostics,
                     onFullscreen = onFullscreen,
+                    onOpenThermalCalibration = onOpenThermalCalibration,
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(NeoDimens.ScreenPadding),
@@ -135,6 +138,7 @@ private fun WideContent(
     onRequestCameraPermission: () -> Unit,
     onToggleDiagnostics: () -> Unit,
     onFullscreen: () -> Unit,
+    onOpenThermalCalibration: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -163,6 +167,7 @@ private fun WideContent(
             if (state.showDiagnostics) {
                 UsbDiagnosticsPanel(
                     thermalState = state.thermalState,
+                    onOpenThermalCalibration = onOpenThermalCalibration,
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(max = 200.dp),
@@ -243,6 +248,7 @@ private fun NarrowContent(
     onRequestCameraPermission: () -> Unit,
     onToggleDiagnostics: () -> Unit,
     onFullscreen: () -> Unit,
+    onOpenThermalCalibration: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -279,6 +285,7 @@ private fun NarrowContent(
         if (state.showDiagnostics) {
             UsbDiagnosticsPanel(
                 thermalState = state.thermalState,
+                onOpenThermalCalibration = onOpenThermalCalibration,
                 modifier = Modifier.fillMaxWidth(),
             )
         }

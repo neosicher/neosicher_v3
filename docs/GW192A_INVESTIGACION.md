@@ -591,3 +591,66 @@ hardware.
 **Estado:** corregido en código; pendiente de volver a probar en POCO F7 + GW192A para
 confirmar si, superado el `GET_CUR`, el `SET_CUR(Commit)` y la lectura por bulk
 transfer completan la negociación y entregan frames reales.
+
+**Actualización posterior:** confirmado — tras el fix, el stream se visualiza
+correctamente en la app (ver sección 14).
+
+---
+
+## 14. Calibración empírica de temperatura (decisión explícita del usuario)
+
+### 14.1 Contexto y decisión
+
+Confirmado el streaming visual (sección 13.6), el usuario del proyecto solicitó
+explícitamente una **aproximación de temperatura en °C**, siendo consciente de que:
+
+- El GW192A **no** expone datos radiométricos (CONFIRMADO en secciones 13.5 y 13.6).
+- No existe datasheet público del sensor ni fórmula de calibración oficial del
+  fabricante (búsqueda pública realizada sin resultado — ver proceso de esta sección).
+- El usuario **decidió explícitamente no contactar al fabricante** y optó por calibrar
+  de forma empírica usando otro sensor de referencia de su propiedad.
+
+Esta decisión quedó documentada aquí para que cualquier lectura futura de este
+documento entienda que la "temperatura" mostrada en la app **no es una medición
+radiométrica real**, sino una **aproximación por regresión lineal de 2-3 puntos**,
+exactamente igual al método de "corrección de dos puntos" descrito en literatura
+pública de calibración de sensores IR no enfriados (ver referencias de la búsqueda:
+Theocalibration de cámaras térmicas no enfriadas, NIST HB.157, MDPI 20/11/3316).
+
+### 14.2 Qué se implementó
+
+- `ThermalCalibration` (`app/.../thermal/ThermalCalibration.kt`): hasta 3 puntos
+  (frío conocido, caliente conocido, corporal). Con 2+ puntos de luminancia (`raw`)
+  distinta, ajusta `temperatura = pendiente·raw + intercepto` por mínimos cuadrados.
+  **Con 0 o 1 punto, no hay recta: no se inventa ninguna conversión.**
+- El punto **corporal** puede arrancar con un **supuesto editable** de 36.0 °C
+  (promedio de piel humana, a petición explícita del usuario) mientras no se mida con
+  el sensor de referencia real — la UI marca ese punto como "supuesto, no medido" y
+  reduce la confianza reportada (`confidence`) cuando se usa.
+- `ThermalFrameResult.sampleCenterPoint()`: lee el valor de luminancia cruda del
+  píxel central del frame (promediado en una ventana 5×5 para reducir ruido) — es
+  el "punto central de medición" pedido, representando la zona apuntada por el usuario
+  (p. ej. la frente).
+- `NeosicherViewModel` aplica la calibración a cada frame nuevo y actualiza SOLO
+  `thermalReading.temperatureCelsius`, sin tocar ningún otro componente de la UI.
+  El resultado se marca siempre `ThermalReadingStatus.EXPERIMENTAL` — la tarjeta
+  "Temperatura" ya mostraba ese estado como "Lectura térmica experimental"
+  (ver `MonitoringCard.kt`, sin cambios).
+- **Pantalla nueva e independiente** `ThermalCalibrationScreen`
+  (`app/.../ui/ThermalCalibrationScreen.kt`): permite capturar el valor crudo actual
+  y asociarlo a una temperatura real medida con el sensor de referencia del usuario,
+  para cada uno de los 3 puntos. Accesible solo desde un enlace discreto dentro del
+  panel de diagnóstico USB (ya oculto por defecto) — **no se modificó el diseño del
+  dashboard principal**, tal como se pidió explícitamente.
+
+### 14.3 Limitaciones honestas de este enfoque (no deben olvidarse)
+
+- La luminancia (`raw`) ya pasó por procesamiento interno de la cámara (posible AGC/
+  normalización) — no hay garantía de que la relación raw→temperatura sea lineal en
+  todo el rango, solo se aproxima localmente entre los puntos calibrados.
+- No hay compensación de emisividad, distancia, ángulo ni temperatura ambiente.
+- La calibración se pierde si cambian las condiciones de la escena de forma
+  significativa respecto al momento en que se tomaron los puntos.
+- **Nunca debe presentarse como diagnóstico médico** (regla ya establecida en la
+  sección 6 y 14 original del documento): es una aproximación experimental, con una
+  confianza reportada deliberadamente baja (`confidence` 0.3–0.6).
