@@ -1,11 +1,12 @@
 package com.neosicher.app.ui.components
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -28,10 +29,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.neosicher.app.R
 import com.neosicher.app.ui.CameraMode
 import com.neosicher.app.ui.theme.NeoColors
 import com.neosicher.app.ui.theme.NeoDimens
@@ -80,6 +83,10 @@ fun NeosicherTopBar(
     }
 }
 
+/**
+ * Logotipo NEOSICHER: símbolo (ojo/lente) + wordmark con tagline, en el azul
+ * claro de la marca. Recreación vectorial basada en el logo proporcionado.
+ */
 @Composable
 private fun NeosicherLogo(modifier: Modifier = Modifier) {
     Row(
@@ -87,30 +94,27 @@ private fun NeosicherLogo(modifier: Modifier = Modifier) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Box(
-            modifier = Modifier
-                .size(30.dp)
-                .clip(RoundedCornerShape(9.dp))
-                .background(
-                    Brush.linearGradient(
-                        listOf(NeoColors.AccentBright, NeoColors.AccentDim)
-                    )
-                ),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                imageVector = Icons.Filled.Sensors,
-                contentDescription = null,
-                tint = NeoColors.Background,
-                modifier = Modifier.size(18.dp),
+        Image(
+            painter = painterResource(id = R.drawable.ic_neosicher_mark),
+            contentDescription = "NEOSICHER",
+            modifier = Modifier.size(30.dp),
+        )
+        Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+            Text(
+                text = "NEOSICHER",
+                color = NeoColors.Logo,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.5.sp,
+                style = androidx.compose.material3.MaterialTheme.typography.titleMedium,
+            )
+            Text(
+                text = "SLEEP LIKE A BABY",
+                color = NeoColors.Logo.copy(alpha = 0.8f),
+                fontWeight = FontWeight.Medium,
+                letterSpacing = 2.sp,
+                style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
             )
         }
-        Text(
-            text = "NEOSICHER",
-            color = NeoColors.TextPrimary,
-            fontWeight = FontWeight.Bold,
-            style = androidx.compose.material3.MaterialTheme.typography.titleMedium,
-        )
     }
 }
 

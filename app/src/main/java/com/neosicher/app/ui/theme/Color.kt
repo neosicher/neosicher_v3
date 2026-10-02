@@ -22,6 +22,9 @@ object NeoColors {
     val AccentBright = Color(0xFF7FE1FF)     // azul claro brillante (glow / highlights)
     val AccentDim = Color(0xFF2E6E8E)        // azul apagado
 
+    // Logotipo (azul claro de la marca NEOSICHER)
+    val Logo = Color(0xFFA9CFF5)
+
     // Texto
     val TextPrimary = Color(0xFFF2F6FF)      // blanco levemente azulado
     val TextSecondary = Color(0xFF9FB2CC)    // azul grisáceo claro

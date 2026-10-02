@@ -123,10 +123,9 @@ fun NeosicherScreen(
 }
 
 /**
- * Composición horizontal: visor de cámara grande arriba y una **fila
- * horizontal** con las cuatro tarjetas de métricas abajo, siempre visibles sin
- * necesidad de hacer scroll. El botón de cambio de cámara va a la derecha de
- * las tarjetas.
+ * Composición horizontal en DOS COLUMNAS:
+ *  - Izquierda: visor de cámara grande + barra inferior (diagnóstico + cambio).
+ *  - Derecha: cuadrícula 2×2 con las cuatro tarjetas de métricas.
  */
 @Composable
 private fun WideContent(
@@ -138,73 +137,99 @@ private fun WideContent(
     onFullscreen: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(
+    Row(
         modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(NeoDimens.PanelGap),
+        horizontalArrangement = Arrangement.spacedBy(NeoDimens.PanelGap),
     ) {
-        // Visor de cámara: ocupa la mayor parte de la altura disponible.
-        CameraPreviewPanel(
-            mode = state.cameraMode,
-            cameraManager = cameraManager,
-            cameraState = state.cameraState,
-            thermalState = state.thermalState,
-            onRequestCameraPermission = onRequestCameraPermission,
-            onFullscreen = onFullscreen,
+        // --- Columna izquierda: cámara + controles inferiores ---
+        Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f),
-        )
-
-        // Fila horizontal de métricas: las 4 tarjetas siempre visibles.
-        MonitoringRow(
-            state = state,
-            modifier = Modifier.fillMaxWidth(),
-        )
-
-        if (state.showDiagnostics) {
-            UsbDiagnosticsPanel(
+                .weight(0.62f)
+                .fillMaxHeight(),
+            verticalArrangement = Arrangement.spacedBy(NeoDimens.PanelGap),
+        ) {
+            CameraPreviewPanel(
+                mode = state.cameraMode,
+                cameraManager = cameraManager,
+                cameraState = state.cameraState,
                 thermalState = state.thermalState,
+                onRequestCameraPermission = onRequestCameraPermission,
+                onFullscreen = onFullscreen,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 220.dp),
+                    .weight(1f),
             )
+
+            if (state.showDiagnostics) {
+                UsbDiagnosticsPanel(
+                    thermalState = state.thermalState,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 200.dp),
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(NeoDimens.CardGap),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                DiagnosticsToggle(
+                    shown = state.showDiagnostics,
+                    onClick = onToggleDiagnostics,
+                    modifier = Modifier.weight(0.4f),
+                )
+                CameraSwitchButton(
+                    targetMode = targetMode(state.cameraMode),
+                    label = switchLabel(state.cameraMode),
+                    onClick = onToggleMode,
+                    modifier = Modifier.weight(0.6f),
+                )
+            }
         }
 
-        // Barra inferior: toggle de diagnóstico + botón de cambio de cámara.
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(NeoDimens.CardGap),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            DiagnosticsToggle(
-                shown = state.showDiagnostics,
-                onClick = onToggleDiagnostics,
-                modifier = Modifier.weight(0.4f),
-            )
-            CameraSwitchButton(
-                targetMode = targetMode(state.cameraMode),
-                label = switchLabel(state.cameraMode),
-                onClick = onToggleMode,
-                modifier = Modifier.weight(0.6f),
-            )
-        }
+        // --- Columna derecha: cuadrícula 2×2 de métricas ---
+        MonitoringGrid(
+            state = state,
+            modifier = Modifier
+                .weight(0.38f)
+                .fillMaxHeight(),
+        )
     }
 }
 
-/** Fila horizontal con las cuatro tarjetas de métricas, repartidas por igual. */
+/**
+ * Cuadrícula 2×2 con las cuatro tarjetas de métricas. Cada tarjeta ocupa un
+ * cuadrante por igual (dos filas de peso 1, dos columnas de peso 1), siempre
+ * visibles sin scroll.
+ */
 @Composable
-private fun MonitoringRow(
+private fun MonitoringGrid(
     state: NeosicherUiState,
     modifier: Modifier = Modifier,
 ) {
-    Row(
+    Column(
         modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(NeoDimens.CardGap),
+        verticalArrangement = Arrangement.spacedBy(NeoDimens.CardGap),
     ) {
-        TemperatureCard(state.thermalReading, Modifier.weight(1f))
-        HeartRateCard(state.vitalSigns.heartRate, Modifier.weight(1f))
-        RespiratoryRateCard(state.vitalSigns.respiratoryRate, Modifier.weight(1f))
-        SleepCard(state.sleepStatus, Modifier.weight(1f))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            horizontalArrangement = Arrangement.spacedBy(NeoDimens.CardGap),
+        ) {
+            TemperatureCard(state.thermalReading, Modifier.weight(1f).fillMaxHeight())
+            HeartRateCard(state.vitalSigns.heartRate, Modifier.weight(1f).fillMaxHeight())
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            horizontalArrangement = Arrangement.spacedBy(NeoDimens.CardGap),
+        ) {
+            RespiratoryRateCard(state.vitalSigns.respiratoryRate, Modifier.weight(1f).fillMaxHeight())
+            SleepCard(state.sleepStatus, Modifier.weight(1f).fillMaxHeight())
+        }
     }
 }
 
