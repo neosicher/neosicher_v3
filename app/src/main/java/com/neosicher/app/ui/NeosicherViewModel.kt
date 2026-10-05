@@ -20,6 +20,9 @@ import com.neosicher.app.thermal.ThermalCalibration
 import com.neosicher.app.thermal.ThermalCalibrationPoint
 import com.neosicher.app.thermal.ThermalCameraRepository
 import com.neosicher.app.usb.UsbDeviceManager
+import com.neosicher.app.vision.BabyPoseAnalyzer
+import com.neosicher.app.vision.PoseOverlayView
+import com.neosicher.app.vision.SleepPositionState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -40,6 +43,17 @@ class NeosicherViewModel(application: Application) : AndroidViewModel(applicatio
     private val appContext: Context = application.applicationContext
 
     val cameraManager = CameraManager(appContext)
+
+    // Detección de postura del bebé en tiempo real sobre el preview de la
+    // cámara Android (ML Kit Pose, on-device). Es EXPERIMENTAL — ver
+    // BabyPoseAnalyzer / SleepPosition. Se engancha al punto de extensión
+    // imageAnalyzer que ya estaba reservado en CameraManager, y dibuja un
+    // overlay (PoseOverlayView) como hijo del PreviewView, SIN modificar el
+    // dashboard ni CameraPreviewPanel.
+    private val babyPoseAnalyzer = BabyPoseAnalyzer()
+    private val poseOverlay = PoseOverlayView(appContext)
+
+    val sleepPosition: StateFlow<SleepPositionState> = babyPoseAnalyzer.state
 
     private val usbManager = UsbDeviceManager(appContext)
     private val thermalRepository = ThermalCameraRepository(
@@ -62,6 +76,17 @@ class NeosicherViewModel(application: Application) : AndroidViewModel(applicatio
     private var batteryReceiver: BroadcastReceiver? = null
 
     init {
+        // Enganchar la detección de postura al pipeline de la cámara Android.
+        cameraManager.imageAnalyzer = babyPoseAnalyzer
+        cameraManager.previewOverlay = poseOverlay
+
+        // Cada nueva estimación de postura: redibujar el overlay (en el hilo
+        // principal, requisito de las vistas Android). No toca el dashboard.
+        viewModelScope.launch {
+            babyPoseAnalyzer.state.collect { pose ->
+                poseOverlay.post { poseOverlay.update(pose) }
+            }
+        }
         // Fusionar el estado de la cámara Android en el UI state.
         viewModelScope.launch {
             cameraManager.state.collect { camera ->
@@ -228,5 +253,6 @@ class NeosicherViewModel(application: Application) : AndroidViewModel(applicatio
         batteryReceiver?.let { runCatching { appContext.unregisterReceiver(it) } }
         cameraManager.release()
         thermalRepository.release()
+        babyPoseAnalyzer.close()
     }
 }

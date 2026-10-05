@@ -2,6 +2,9 @@ package com.neosicher.app.camera
 
 import android.content.Context
 import android.util.Log
+import android.view.View
+import android.view.ViewGroup
+import android.widget.FrameLayout
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.Preview
@@ -38,6 +41,14 @@ class CameraManager(private val appContext: Context) {
      * REQUIERE implementación de algoritmos reales antes de producir métricas.
      */
     var imageAnalyzer: ImageAnalysis.Analyzer? = null
+
+    /**
+     * Vista de overlay opcional (p. ej. esqueleto de pose del bebé) que se
+     * superpone al preview en tiempo real. Si se define, al vincular el preview
+     * se añade como VISTA HIJA del PreviewView, de modo que NO hay que tocar
+     * CameraPreviewPanel ni el dashboard. Null = sin overlay.
+     */
+    var previewOverlay: View? = null
 
     /** Contexto de aplicación, usado por la UI para construir el PreviewView. */
     fun appContextForPreview(): Context = appContext
@@ -96,6 +107,12 @@ class CameraManager(private val appContext: Context) {
                     provider.bindToLifecycle(lifecycleOwner, selector, preview)
                 }
 
+                // Superponer el overlay (si existe) como vista hija del
+                // PreviewView, en tiempo real sobre el preview. No se toca
+                // CameraPreviewPanel: el overlay vive dentro del propio
+                // contenedor del preview.
+                attachOverlay(previewView)
+
                 _state.value = _state.value.copy(isPreviewActive = true, errorMessage = null)
             } catch (t: Throwable) {
                 Log.e(TAG, "Error al vincular la cámara", t)
@@ -105,6 +122,27 @@ class CameraManager(private val appContext: Context) {
                 )
             }
         }, ContextCompat.getMainExecutor(appContext))
+    }
+
+    /**
+     * Añade [previewOverlay] como vista hija del [previewView] si aún no lo
+     * está, ocupando todo el contenedor. Idempotente: si ya está adjunto al
+     * contenedor correcto no hace nada; si estaba en otro padre, lo mueve.
+     */
+    private fun attachOverlay(previewView: PreviewView) {
+        val overlay = previewOverlay ?: return
+        val parent = overlay.parent
+        if (parent === previewView) return
+        if (parent is ViewGroup) {
+            parent.removeView(overlay)
+        }
+        previewView.addView(
+            overlay,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT,
+            ),
+        )
     }
 
     fun unbind() {

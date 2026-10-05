@@ -8,6 +8,7 @@ composeBom = "2024.12.01"
 camerax = "1.4.1"
 accompanistPermissions = "0.36.0"
 coroutines = "1.9.0"
+mlkitPoseDetection = "18.0.0-beta5"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -32,6 +33,12 @@ androidx-camera-view = { group = "androidx.camera", name = "camera-view", versio
 accompanist-permissions = { group = "com.google.accompanist", name = "accompanist-permissions", version.ref = "accompanistPermissions" }
 
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
+
+# ML Kit Pose Detection (on-device, sin modelo externo que descargar). Se usa
+# para estimar la postura al dormir del bebé a partir de 33 landmarks del
+# cuerpo. EXPERIMENTAL: los modelos de pose están entrenados mayoritariamente
+# con adultos; en bebés la exactitud no está garantizada (ver notas en código).
+mlkit-pose-detection = { group = "com.google.mlkit", name = "pose-detection", version.ref = "mlkitPoseDetection" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

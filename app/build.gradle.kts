@@ -76,5 +76,8 @@ dependencies {
     // Coroutines
     implementation(libs.kotlinx.coroutines.android)
 
+    // ML Kit Pose Detection — estimación de postura del bebé (on-device).
+    implementation(libs.mlkit.pose.detection)
+
     debugImplementation(libs.androidx.ui.tooling)
 }
