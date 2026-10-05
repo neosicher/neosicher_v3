@@ -62,6 +62,13 @@ class Gw192aThermalCameraDataSource(
     private var framesReceivedSinceStart = 0
     private var watchdogJob: kotlinx.coroutines.Job? = null
 
+    // Cola de formatos a intentar (fallback automático) y registro de intentos.
+    private var candidateQueue:
+        ArrayDeque<Pair<com.neosicher.app.usb.UvcFormatDescriptor, com.neosicher.app.usb.UvcFrameDescriptor>> =
+        ArrayDeque()
+    private val triedCandidates = mutableListOf<String>()
+    private var currentDeviceForStreaming: UsbDevice? = null
+
     init {
         // Escuchamos los eventos de permiso del gestor USB.
         scope.launch {
@@ -235,8 +242,13 @@ class Gw192aThermalCameraDataSource(
         // formatos/resoluciones reales que declara este dispositivo.
         _state.value = _state.value.copy(uvcInfo = uvcResult)
 
-        val chosen = uvcResult.recommendedFrame
-        if (chosen == null) {
+        // Lista ORDENADA de candidatos: se intentan uno por uno hasta que uno
+        // negocie Y entregue frames. Resuelve el caso de dispositivos que
+        // rechazan ciertos formatIdx/frameIdx (p. ej. el GW192A del usuario
+        // rechazó formatIdx=2/frameIdx=2): en vez de rendirse al primer
+        // rechazo, se prueba el siguiente candidato automáticamente.
+        candidateQueue = ArrayDeque(uvcResult.orderedCandidates)
+        if (candidateQueue.isEmpty()) {
             Log.i(TAG, "Descriptors UVC sin frames declarados. " +
                 "videoControlFound=${uvcResult.videoControlInterfaceFound} " +
                 "formatos=${uvcResult.streamingFormats.size}")
@@ -258,13 +270,48 @@ class Gw192aThermalCameraDataSource(
             return
         }
         streamingConnection = connection
+        currentDeviceForStreaming = device
+        triedCandidates.clear()
+        tryNextCandidate()
+    }
 
-        val (format, frame) = chosen
+    /**
+     * Intenta el siguiente formato/frame de la cola. Si lo rechaza o no
+     * entrega frames, se llama de nuevo (desde onCandidateFailed/watchdog)
+     * hasta agotar la cola. Solo entonces se reporta fallo honesto.
+     */
+    private fun tryNextCandidate() {
+        val connection = streamingConnection ?: return
+        val device = currentDeviceForStreaming ?: return
+
+        val next = candidateQueue.removeFirstOrNull()
+        if (next == null) {
+            val resumen = triedCandidates.joinToString("; ")
+            _state.value = _state.value.copy(
+                status = ThermalConnectionStatus.READY,
+                message = "GW192A conectado · Stream térmico no disponible",
+                errorDetail = "Ningún formato declarado funcionó. Intentados: $resumen",
+                lastFrame = null,
+            )
+            cleanupStreaming()
+            return
+        }
+
+        val (format, frame) = next
         currentFormat = format
         framesReceivedSinceStart = 0
-        Log.i(TAG, "Intentando streaming UVC: formatIdx=${format.formatIndex} " +
-            "frameIdx=${frame.frameIndex} ${frame.widthPx}x${frame.heightPx} " +
-            "fourCc=${format.fourCc} kind=${format.kind}")
+        val desc = "fmt${format.formatIndex}/frm${frame.frameIndex} " +
+            "${frame.widthPx}x${frame.heightPx} ${format.fourCc ?: format.kind}"
+        triedCandidates.add(desc)
+        Log.i(TAG, "Intentando candidato UVC: $desc")
+
+        _state.value = _state.value.copy(
+            status = ThermalConnectionStatus.READY,
+            message = "GW192A · Probando formato $desc…",
+            errorDetail = null,
+        )
+
+        // Cada intento usa una sesión nueva (la anterior ya se detuvo).
         val session = UvcStreamingSession(connection, device)
         streamingSession = session
 
@@ -275,46 +322,52 @@ class Gw192aThermalCameraDataSource(
             expectedWidth = frame.widthPx,
             expectedHeight = frame.heightPx,
             onNegotiated = {
-                // Se llama de forma SÍNCRONA en el hilo que invocó start(),
-                // justo tras aceptar el Probe/Commit. Evita la carrera entre
-                // "negociación OK" y un posible error reportado por el hilo
-                // de lectura antes de que actualicemos el estado.
                 _state.value = _state.value.copy(
                     status = ThermalConnectionStatus.STREAMING,
-                    message = "GW192A · Negociado, esperando frames…",
+                    message = "GW192A · Negociado ($desc), esperando frames…",
                     errorDetail = null,
                 )
-                startNoFrameWatchdog(frame.widthPx, frame.heightPx)
+                startNoFrameWatchdog(desc)
             },
             onFrame = { bytes, width, height -> onRawFrame(bytes, width, height) },
-            onError = { message -> onStreamingError(message) },
+            onError = { message -> onCandidateFailed(message) },
         )
 
         if (!started) {
-            // Si start() devuelve false, onError ya fue invocado dentro con
-            // el detalle correspondiente (o la excepción se capturó arriba).
-            cleanupStreaming()
+            // Negociación rechazada: detener esta sesión y probar el siguiente.
+            onCandidateFailed("negociación rechazada")
+        }
+    }
+
+    /**
+     * Un candidato falló (rechazo de negociación o sin frames). Detiene la
+     * sesión actual (sin cerrar la conexión persistente) y prueba el siguiente.
+     */
+    private fun onCandidateFailed(reason: String) {
+        Log.w(TAG, "Candidato falló: $reason — probando siguiente")
+        watchdogJob?.cancel()
+        watchdogJob = null
+        streamingSession?.stop()
+        streamingSession = null
+        // Pequeña pausa para que el dispositivo se estabilice entre intentos.
+        scope.launch {
+            kotlinx.coroutines.delay(300)
+            tryNextCandidate()
         }
     }
 
     /**
      * Si tras negociar el stream no llega NINGÚN frame interpretable en un
-     * tiempo razonable, se reporta como error honesto en vez de dejar la UI
-     * mostrando el mensaje genérico de "sin confirmar protocolo" sin ninguna
-     * pista. Esto puede pasar, por ejemplo, si el endpoint bulk no entrega
-     * datos pese a que la negociación de control fue aceptada.
+     * tiempo razonable, se trata como fallo de ESTE candidato y se prueba el
+     * siguiente (no se da por perdido todo el proceso).
      */
-    private fun startNoFrameWatchdog(width: Int, height: Int) {
+    private fun startNoFrameWatchdog(desc: String) {
         watchdogJob?.cancel()
         watchdogJob = scope.launch {
-            kotlinx.coroutines.delay(6000)
+            kotlinx.coroutines.delay(4000)
             if (_state.value.status == ThermalConnectionStatus.STREAMING && framesReceivedSinceStart == 0) {
-                Log.w(TAG, "Watchdog: 6s sin ningún frame interpretable tras negociar (${width}x$height)")
-                onStreamingError(
-                    "El dispositivo aceptó la negociación UVC pero no llegó ningún frame " +
-                        "interpretable en 6s (formato ${width}x$height). Puede que el endpoint " +
-                        "bulk no esté entregando datos, o que el formato elegido no sea el correcto."
-                )
+                Log.w(TAG, "Watchdog: 4s sin frames con $desc — probando siguiente candidato")
+                onCandidateFailed("sin datos de endpoint (4s) con $desc")
             }
         }
     }
@@ -347,17 +400,6 @@ class Gw192aThermalCameraDataSource(
         // no hay temperatura calibrada en °C que reportar como VitalSigns/
         // ThermalReading. La visualización EXPERIMENTAL vive solo en
         // ThermalCameraState.lastFrame (ver KDoc de ThermalFrameInterpreter).
-    }
-
-    private fun onStreamingError(message: String) {
-        Log.w(TAG, "Streaming UVC detenido: $message")
-        _state.value = _state.value.copy(
-            status = ThermalConnectionStatus.READY,
-            message = "GW192A conectado · Stream térmico no disponible",
-            errorDetail = message,
-            lastFrame = null,
-        )
-        cleanupStreaming()
     }
 
     private fun cleanupStreaming() {

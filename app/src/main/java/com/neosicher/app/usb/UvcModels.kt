@@ -137,26 +137,41 @@ data class UvcParseResult(
      * Ninguna opción implica temperatura calibrada: todas son solo imagen.
      */
     val recommendedFrame: Pair<UvcFormatDescriptor, UvcFrameDescriptor>?
+        get() = orderedCandidates.firstOrNull()
+
+    /**
+     * TODOS los pares (formato, frame) declarados, ORDENADOS por preferencia,
+     * para intentarlos uno por uno hasta que el dispositivo acepte negociar y
+     * entregue datos (fallback automático). El orden de preferencia:
+     *   1) NV12 (imagen de gris limpia según evidencia real), menor resolución.
+     *   2) YUY2/YUYV/UYVY, menor resolución (evita compuestos con copias extra).
+     *   3) Resto de UNCOMPRESSED/FRAME_BASED, menor resolución.
+     *   4) Cualquier otro (incluido MJPEG), como último recurso.
+     * Elegir la MENOR resolución reduce ancho de banda y evita el frame
+     * compuesto 96×176 documentado. Los duplicados se eliminan conservando
+     * la primera aparición.
+     */
+    val orderedCandidates: List<Pair<UvcFormatDescriptor, UvcFrameDescriptor>>
         get() {
             val all = allFramesWithFormat
-            if (all.isEmpty()) return null
-            // 1) NV12 (o cualquier UNCOMPRESSED cuyo FourCC sea NV12): el más
-            //    simple y limpio según evidencia real (escala de grises).
-            all.firstOrNull { (fmt, _) -> fmt.fourCc?.startsWith("NV12", ignoreCase = true) == true }
-                ?.let { return it }
-            // 2) Cualquier formato UNCOMPRESSED/FRAME_BASED con FourCC YUY2/YUYV/UYVY,
-            //    eligiendo la resolución MÁS PEQUEÑA (evita compuestos con copias extra,
-            //    como el 96x176 documentado que incluye miniaturas adicionales).
-            all.filter { (fmt, _) ->
-                val fcc = fmt.fourCc?.uppercase()
-                fcc == "YUY2" || fcc == "YUYV" || fcc == "UYVY"
-            }.minByOrNull { (_, fr) -> fr.widthPx * fr.heightPx }
-                ?.let { return it }
-            // 3) Cualquier otro UNCOMPRESSED/FRAME_BASED (resolución más pequeña).
-            all.filter { (fmt, _) -> fmt.kind == UvcFormatKind.UNCOMPRESSED || fmt.kind == UvcFormatKind.FRAME_BASED }
-                .minByOrNull { (_, fr) -> fr.widthPx * fr.heightPx }
-                ?.let { return it }
-            // 4) Último recurso: doble altura, o directamente el primero declarado.
-            return doubleHeightCandidatesWithFormat.firstOrNull() ?: all.first()
+            if (all.isEmpty()) return emptyList()
+
+            fun area(p: Pair<UvcFormatDescriptor, UvcFrameDescriptor>) =
+                p.second.widthPx * p.second.heightPx
+
+            val nv12 = all.filter { (f, _) -> f.fourCc?.startsWith("NV12", true) == true }
+                .sortedBy(::area)
+            val yuyv = all.filter { (f, _) ->
+                val c = f.fourCc?.uppercase(); c == "YUY2" || c == "YUYV" || c == "UYVY"
+            }.sortedBy(::area)
+            val otherUncompressed = all.filter { (f, _) ->
+                f.kind == UvcFormatKind.UNCOMPRESSED || f.kind == UvcFormatKind.FRAME_BASED
+            }.sortedBy(::area)
+            val rest = all.sortedBy(::area)
+
+            // Concatenar en orden de preferencia y quitar duplicados conservando
+            // la primera aparición (identidad por formatIndex+frameIndex).
+            return (nv12 + yuyv + otherUncompressed + rest)
+                .distinctBy { (f, fr) -> f.formatIndex to fr.frameIndex }
         }
 }
