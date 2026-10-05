@@ -138,7 +138,10 @@ class PoseOverlayView(context: Context) : View(context) {
 
         // Aviso permanente de que es experimental, nunca diagnóstico médico.
         val note = "Estimación experimental — no es diagnóstico médico"
-        val notePaint = Paint(labelTextPaint).apply { textSize = 26f; color = Color.WHITE }
+        val notePaint = Paint(labelTextPaint).apply {
+            textSize = 26f
+            this.color = Color.WHITE
+        }
         canvas.drawText(note, boxLeft, boxBottom + 36f, notePaint)
     }
 
