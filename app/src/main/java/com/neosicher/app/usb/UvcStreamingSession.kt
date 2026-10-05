@@ -95,6 +95,16 @@ class UvcStreamingSession(
         }
         vsInterface = vs
 
+        // Seleccionar explícitamente el alternate setting de la interfaz de
+        // streaming. En UVC por BULK el streaming vive en alt setting 0, pero
+        // algunos dispositivos requieren una llamada explícita a
+        // setInterface para "activar" la interfaz antes de transmitir.
+        // Si falla, no es fatal (se continúa), pero se registra.
+        runCatching {
+            val ok = connection.setInterface(vs)
+            Log.i(TAG, "setInterface(VideoStreaming alt=${vs.alternateSetting}) ok=$ok")
+        }.onFailure { Log.w(TAG, "setInterface lanzó excepción (no fatal): ${it.message}") }
+
         // NOTA: solo se soporta el endpoint tipo BULK, porque
         // UsbDeviceConnection.bulkTransfer() de Android únicamente opera
         // sobre endpoints bulk/interrupt. La transferencia isócrona requiere
@@ -219,15 +229,25 @@ class UvcStreamingSession(
         onFrame: (ByteArray, Int, Int) -> Unit,
         onError: (String) -> Unit,
     ) {
-        val packetBuf = ByteArray(endpoint.maxPacketSize.coerceAtLeast(1024))
-        val frameBuf = ByteArray(maxFrameSize.coerceAtLeast(1))
+        // Buffer de lectura GRANDE: en UVC por bulk, cada bulkTransfer debe
+        // poder recibir un bloque grande (no solo maxPacketSize=512). Leer de
+        // a 512 bytes hace que el dispositivo abandone la transferencia. Se usa
+        // un buffer del tamaño de un frame completo + margen para el header.
+        val readBufSize = (maxFrameSize + 4096).coerceAtLeast(65536)
+        val readBuf = ByteArray(readBufSize)
+        val frameBuf = ByteArray((maxFrameSize * 2).coerceAtLeast(65536))
         var frameOffset = 0
         var currentFid = -1
         var consecutiveTimeouts = 0
+        var totalBytesSeen = 0L
+        var transfersWithData = 0
+
+        Log.i(TAG, "readLoop iniciado: maxPacket=${endpoint.maxPacketSize} " +
+            "readBuf=$readBufSize maxFrameSize=$maxFrameSize ${width}x$height")
 
         while (running.get()) {
             val n = try {
-                connection.bulkTransfer(endpoint, packetBuf, packetBuf.size, TRANSFER_TIMEOUT_MS)
+                connection.bulkTransfer(endpoint, readBuf, readBuf.size, TRANSFER_TIMEOUT_MS)
             } catch (t: Throwable) {
                 onError("Error de lectura USB: ${t.message}")
                 return
@@ -236,51 +256,80 @@ class UvcStreamingSession(
             if (n <= 0) {
                 consecutiveTimeouts++
                 if (consecutiveTimeouts > MAX_CONSECUTIVE_TIMEOUTS) {
-                    onError("Sin datos del endpoint de streaming tras $MAX_CONSECUTIVE_TIMEOUTS intentos")
+                    onError("Sin datos del endpoint de streaming tras $MAX_CONSECUTIVE_TIMEOUTS intentos " +
+                        "(bytesVistos=$totalBytesSeen transfersConDatos=$transfersWithData)")
                     return
                 }
                 continue
             }
             consecutiveTimeouts = 0
+            totalBytesSeen += n
+            transfersWithData++
+            if (transfersWithData <= 5) {
+                Log.i(TAG, "bulk transfer #$transfersWithData: $n bytes " +
+                    "(primeros bytes: ${firstBytesHex(readBuf, n)})")
+            }
 
-            // Payload Header UVC (spec §2.4.3.3): byte0=HLE, byte1=bitfield (BFH).
+            // Payload Header UVC (spec §2.4.3.3): byte0=HLE (header length),
+            // byte1=bitfield (BFH). Algunos dispositivos mandan datos sin
+            // header UVC (bulk "crudo"); se maneja ese caso también.
             if (n < 2) continue
-            val hle = packetBuf[0].toIntUnsigned()
-            if (hle < 2 || hle > n) continue // header inválido, se descarta el paquete
-            val bfh = packetBuf[1].toIntUnsigned()
-            val fid = bfh and 0x01
-            val eof = (bfh and 0x02) != 0
-            val error = (bfh and 0x40) != 0
+            val hle = readBuf[0].toIntUnsigned()
+            val looksLikeUvcHeader = hle in 2..12 && hle <= n
 
-            if (error) {
-                Log.w(TAG, "Payload con bit ERR activo, se descarta el frame en curso")
-                frameOffset = 0
-                currentFid = fid
-                continue
-            }
+            if (looksLikeUvcHeader) {
+                val bfh = readBuf[1].toIntUnsigned()
+                val fid = bfh and 0x01
+                val eof = (bfh and 0x02) != 0
+                val error = (bfh and 0x40) != 0
 
-            if (currentFid == -1) currentFid = fid
-            if (fid != currentFid) {
-                // Cambió el FID sin haber visto EOF: se descarta el frame incompleto
-                // y se empieza uno nuevo (comportamiento tolerante, no se inventa nada).
-                frameOffset = 0
-                currentFid = fid
-            }
-
-            val payloadLen = n - hle
-            if (payloadLen > 0 && frameOffset + payloadLen <= frameBuf.size) {
-                System.arraycopy(packetBuf, hle, frameBuf, frameOffset, payloadLen)
-                frameOffset += payloadLen
-            }
-
-            if (eof) {
-                if (frameOffset > 0) {
-                    onFrame(frameBuf.copyOf(frameOffset), width, height)
+                if (error) {
+                    frameOffset = 0
+                    currentFid = fid
+                    continue
                 }
-                frameOffset = 0
-                currentFid = -1
+                if (currentFid == -1) currentFid = fid
+                if (fid != currentFid) {
+                    // Nuevo frame: emitir el anterior si tenía contenido.
+                    if (frameOffset > 0) {
+                        onFrame(frameBuf.copyOf(frameOffset), width, height)
+                    }
+                    frameOffset = 0
+                    currentFid = fid
+                }
+
+                val payloadLen = n - hle
+                if (payloadLen > 0 && frameOffset + payloadLen <= frameBuf.size) {
+                    System.arraycopy(readBuf, hle, frameBuf, frameOffset, payloadLen)
+                    frameOffset += payloadLen
+                }
+
+                // Emitir frame cuando: hay EOF, o se completó el tamaño esperado.
+                if (eof || frameOffset >= maxFrameSize) {
+                    if (frameOffset > 0) {
+                        onFrame(frameBuf.copyOf(frameOffset), width, height)
+                    }
+                    frameOffset = 0
+                    currentFid = -1
+                }
+            } else {
+                // Sin header UVC reconocible: tratar el bloque como datos crudos
+                // y acumular hasta completar un frame del tamaño esperado.
+                if (frameOffset + n <= frameBuf.size) {
+                    System.arraycopy(readBuf, 0, frameBuf, frameOffset, n)
+                    frameOffset += n
+                }
+                if (frameOffset >= maxFrameSize) {
+                    onFrame(frameBuf.copyOf(maxFrameSize), width, height)
+                    frameOffset = 0
+                }
             }
         }
+    }
+
+    private fun firstBytesHex(buf: ByteArray, n: Int): String {
+        val count = minOf(n, 8)
+        return (0 until count).joinToString(" ") { "%02X".format(buf[it]) }
     }
 
     // -- Control transfers ------------------------------------------------
