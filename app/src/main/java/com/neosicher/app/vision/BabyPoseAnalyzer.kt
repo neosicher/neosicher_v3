@@ -66,6 +66,7 @@ class BabyPoseAnalyzer : ImageAnalysis.Analyzer {
     @SuppressLint("UnsafeOptInUsageError")
     override fun analyze(imageProxy: ImageProxy) {
         framesReceived++
+        if (framesReceived == 1L) Log.i(TAG, "Primer frame recibido de la cámara")
         val mediaImage = imageProxy.image
         if (mediaImage == null) {
             imageProxy.close()

@@ -148,6 +148,8 @@ class CameraManager(private val appContext: Context) {
                 FrameLayout.LayoutParams.MATCH_PARENT,
             ),
         )
+        Log.i(TAG, "Overlay de postura añadido al contenedor del preview (hijos=${host.childCount}, " +
+            "analizador=${imageAnalyzer != null})")
     }
 
     fun unbind() {

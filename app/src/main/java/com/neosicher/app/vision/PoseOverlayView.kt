@@ -10,12 +10,17 @@ import com.google.mlkit.vision.pose.PoseLandmark
 
 /**
  * Overlay en tiempo real sobre el preview de la cámara Android: esqueleto,
- * recuadro de la cara, etiqueta de postura y banner de alerta.
+ * recuadro de la cara, etiqueta de postura, banner de alerta y diagnóstico.
  *
- * Se añade como VISTA HIJA del `PreviewView`, así que el dashboard y
- * `CameraPreviewPanel` NO se modifican. Escala las coordenadas de la imagen
- * de análisis al tamaño de esta vista en modo "center-crop", igual que
- * `PreviewView.ScaleType.FILL_CENTER`, para que todo quede alineado.
+ * Se añade como HERMANO del `PreviewView` (nunca hijo: CameraX ejecuta
+ * removeAllViews() sobre el PreviewView al arrancar la cámara). Escala las
+ * coordenadas de la imagen de análisis al tamaño de esta vista en modo
+ * "center-crop", igual que `PreviewView.ScaleType.FILL_CENTER`.
+ *
+ * Marcas de verificación (siempre visibles, incluso sin detecciones):
+ *  - borde cian alrededor del visor,
+ *  - etiqueta "NEOSICHER v2.0" arriba a la derecha.
+ * Si NO se ven, la app instalada no es este build o el overlay no está montado.
  */
 class PoseOverlayView(context: Context) : View(context) {
 
@@ -24,6 +29,10 @@ class PoseOverlayView(context: Context) : View(context) {
         isClickable = false
         isFocusable = false
     }
+
+    private val density: Float = resources.displayMetrics.density
+
+    private fun dp(value: Float): Float = value * density
 
     private var state: SleepPositionState = SleepPositionState.EMPTY
 
@@ -35,13 +44,19 @@ class PoseOverlayView(context: Context) : View(context) {
     private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         this.color = Color.parseColor("#4ADEDE")
         this.style = Paint.Style.STROKE
-        this.strokeWidth = 6f
+        this.strokeWidth = 2.5f * density
     }
 
     private val facePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         this.color = Color.parseColor("#30A46C")
         this.style = Paint.Style.STROKE
-        this.strokeWidth = 5f
+        this.strokeWidth = 2f * density
+    }
+
+    private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        this.color = Color.parseColor("#4ADEDE")
+        this.style = Paint.Style.STROKE
+        this.strokeWidth = 3f * density
     }
 
     private val labelBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -50,14 +65,27 @@ class PoseOverlayView(context: Context) : View(context) {
 
     private val labelTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         this.color = Color.WHITE
-        this.textSize = 42f
+        this.textSize = 15f * density
         this.isFakeBoldText = true
     }
 
     private val noteTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         this.color = Color.WHITE
-        this.textSize = 26f
+        this.textSize = 10f * density
         this.isFakeBoldText = true
+        // Sombra para que se lea sobre cualquier fondo de cámara.
+        this.setShadowLayer(3f * density, 0f, 0f, Color.BLACK)
+    }
+
+    private val tagTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        this.color = Color.BLACK
+        this.textSize = 11f * density
+        this.isFakeBoldText = true
+    }
+
+    private val tagBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        this.color = Color.parseColor("#4ADEDE")
+        this.style = Paint.Style.FILL
     }
 
     /** Actualiza el estado a dibujar. Debe llamarse desde el hilo principal. */
@@ -68,6 +96,8 @@ class PoseOverlayView(context: Context) : View(context) {
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
+
+        drawVerificationMarks(canvas)
 
         val current = state
         val srcW = current.sourceImageWidth
@@ -97,7 +127,7 @@ class PoseOverlayView(context: Context) : View(context) {
         }
         for (p in current.landmarks) {
             if (p.inFrameLikelihood < MIN_DRAW_LIKELIHOOD) continue
-            canvas.drawCircle(mapX(p.x), mapY(p.y), 7f, pointPaint)
+            canvas.drawCircle(mapX(p.x), mapY(p.y), dp(3f), pointPaint)
         }
 
         // Recuadro de la cara detectada.
@@ -111,6 +141,22 @@ class PoseOverlayView(context: Context) : View(context) {
         drawLabel(canvas, current)
     }
 
+    /** Borde + etiqueta de versión: prueban que ESTE overlay está montado y dibujando. */
+    private fun drawVerificationMarks(canvas: Canvas) {
+        val inset = dp(2f)
+        canvas.drawRect(inset, inset, width - inset, height - inset, borderPaint)
+
+        val padH = dp(10f)
+        val padV = dp(5f)
+        val textWidth = tagTextPaint.measureText(VERSION_TAG)
+        val right = width - dp(14f)
+        val left = right - textWidth - padH * 2
+        val top = dp(14f)
+        val bottom = top + tagTextPaint.textSize + padV * 2
+        canvas.drawRoundRect(RectF(left, top, right, bottom), dp(10f), dp(10f), tagBgPaint)
+        canvas.drawText(VERSION_TAG, left + padH, top + padV + tagTextPaint.textSize * 0.85f, tagTextPaint)
+    }
+
     private fun drawLabel(canvas: Canvas, current: SleepPositionState) {
         val position = current.position
         val backgroundColor = when (position) {
@@ -118,7 +164,7 @@ class PoseOverlayView(context: Context) : View(context) {
             SleepPosition.FACE_COVERED -> Color.parseColor("#C2185B") // magenta
             SleepPosition.SUPINE -> Color.parseColor("#30A46C")       // verde
             SleepPosition.SIDE -> Color.parseColor("#F5A623")         // ámbar
-            SleepPosition.UNKNOWN -> Color.parseColor("#8B8B8B")      // gris
+            SleepPosition.UNKNOWN -> Color.parseColor("#6B6B6B")      // gris
         }
         labelBgPaint.color = backgroundColor
 
@@ -129,22 +175,24 @@ class PoseOverlayView(context: Context) : View(context) {
             "${position.displayLabel} · exp. ${percent}%"
         }
 
-        val pad = 24f
+        // Debajo del rótulo "Cámara Android" de la interfaz (arriba-izquierda),
+        // que si no taparía la etiqueta.
+        val pad = dp(10f)
+        val boxLeft = dp(14f)
+        val boxTop = dp(58f)
         val textWidth = labelTextPaint.measureText(text)
-        val boxLeft = 28f
-        val boxTop = 28f
         val boxRight = boxLeft + textWidth + pad * 2
-        val boxBottom = boxTop + labelTextPaint.textSize + pad * 1.4f
+        val boxBottom = boxTop + labelTextPaint.textSize + pad * 1.6f
 
-        canvas.drawRoundRect(RectF(boxLeft, boxTop, boxRight, boxBottom), 24f, 24f, labelBgPaint)
+        canvas.drawRoundRect(RectF(boxLeft, boxTop, boxRight, boxBottom), dp(10f), dp(10f), labelBgPaint)
         canvas.drawText(
             text,
             boxLeft + pad,
-            boxTop + pad + labelTextPaint.textSize * 0.8f,
+            boxTop + pad * 0.8f + labelTextPaint.textSize * 0.85f,
             labelTextPaint,
         )
 
-        var nextY = boxBottom + 40f
+        var nextY = boxBottom + dp(18f)
 
         // Banner de alerta: solo si la postura de atención se sostiene.
         if (current.isAlert) {
@@ -152,11 +200,11 @@ class PoseOverlayView(context: Context) : View(context) {
             val alertWidth = labelTextPaint.measureText(alertText)
             labelBgPaint.color = Color.parseColor("#B71C1C")
             canvas.drawRoundRect(
-                RectF(boxLeft, nextY - 34f, boxLeft + alertWidth + pad * 2, nextY + 22f),
-                20f, 20f, labelBgPaint,
+                RectF(boxLeft, nextY - dp(4f), boxLeft + alertWidth + pad * 2, nextY + labelTextPaint.textSize + pad),
+                dp(10f), dp(10f), labelBgPaint,
             )
-            canvas.drawText(alertText, boxLeft + pad, nextY + 8f, labelTextPaint)
-            nextY += 70f
+            canvas.drawText(alertText, boxLeft + pad, nextY + labelTextPaint.textSize * 0.9f, labelTextPaint)
+            nextY += labelTextPaint.textSize + pad + dp(16f)
         }
 
         // Aviso permanente: experimental, nunca diagnóstico médico.
@@ -166,7 +214,7 @@ class PoseOverlayView(context: Context) : View(context) {
             nextY,
             noteTextPaint,
         )
-        nextY += 36f
+        nextY += dp(16f)
 
         // Línea de diagnóstico: qué está viendo realmente el detector.
         val ratioText = current.shoulderRatio?.let { "%.2f".format(it) } ?: "--"
@@ -180,11 +228,12 @@ class PoseOverlayView(context: Context) : View(context) {
             noteTextPaint,
         )
         current.analysisError?.let { error ->
-            canvas.drawText("ERROR ML Kit -> $error", boxLeft, nextY + 36f, noteTextPaint)
+            canvas.drawText("ERROR ML Kit -> $error", boxLeft, nextY + dp(16f), noteTextPaint)
         }
     }
 
     companion object {
+        private const val VERSION_TAG = "NEOSICHER v2.0 · overlay activo"
         private const val MIN_DRAW_LIKELIHOOD = 0.4f
 
         /** Pares de landmarks a conectar para dibujar el esqueleto. */
