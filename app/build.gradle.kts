@@ -33,6 +33,10 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        // Fuerza UTF-8 explícito para javac (en Windows, sin esto puede usar
+        // el charset por defecto del sistema, p. ej. Windows-1252, y
+        // malinterpretar fuentes con acentos/caracteres especiales).
+        encoding = "UTF-8"
     }
 
     kotlinOptions {
