@@ -57,11 +57,15 @@ class BabyPoseAnalyzer : ImageAnalysis.Analyzer {
 
     private val classifier = SleepPositionClassifier()
 
+    /** Contador de frames recibidos (solo se toca desde el hilo de análisis). */
+    private var framesReceived = 0L
+
     private val _state = MutableStateFlow(SleepPositionState.EMPTY)
     val state: StateFlow<SleepPositionState> = _state.asStateFlow()
 
     @SuppressLint("UnsafeOptInUsageError")
     override fun analyze(imageProxy: ImageProxy) {
+        framesReceived++
         val mediaImage = imageProxy.image
         if (mediaImage == null) {
             imageProxy.close()
@@ -93,7 +97,10 @@ class BabyPoseAnalyzer : ImageAnalysis.Analyzer {
                         // Sin detector de rostro no se puede distinguir "cara
                         // tapada": mejor no opinar que dar una falsa alerta.
                         Log.w(TAG, "Fallo en detección de rostro", e)
-                        _state.value = SleepPositionState.EMPTY
+                        _state.value = SleepPositionState(
+                            framesReceived = framesReceived,
+                            analysisError = "rostro: ${e.message ?: e.javaClass.simpleName}",
+                        )
                     }
                     .addOnCompleteListener {
                         imageProxy.close()
@@ -101,7 +108,10 @@ class BabyPoseAnalyzer : ImageAnalysis.Analyzer {
             }
             .addOnFailureListener { e ->
                 Log.w(TAG, "Fallo en detección de pose", e)
-                _state.value = SleepPositionState.EMPTY
+                _state.value = SleepPositionState(
+                    framesReceived = framesReceived,
+                    analysisError = "pose: ${e.message ?: e.javaClass.simpleName}",
+                )
                 imageProxy.close()
             }
     }
@@ -151,6 +161,10 @@ class BabyPoseAnalyzer : ImageAnalysis.Analyzer {
             sourceImageWidth = imgW,
             sourceImageHeight = imgH,
             personDetected = allLandmarks.isNotEmpty() || mainFace != null,
+            framesReceived = framesReceived,
+            faceCount = faces.size,
+            shoulderRatio = shoulderGeometry,
+            faceYawDegrees = mainFace?.headEulerAngleY,
         )
     }
 

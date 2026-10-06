@@ -166,6 +166,22 @@ class PoseOverlayView(context: Context) : View(context) {
             nextY,
             noteTextPaint,
         )
+        nextY += 36f
+
+        // Línea de diagnóstico: qué está viendo realmente el detector.
+        val ratioText = current.shoulderRatio?.let { "%.2f".format(it) } ?: "--"
+        val yawText = current.faceYawDegrees?.let { "%.0f°".format(it) } ?: "--"
+        val bodyText = if (current.landmarks.isNotEmpty()) "sí" else "no"
+        canvas.drawText(
+            "frames=${current.framesReceived} cuerpo=$bodyText caras=${current.faceCount} " +
+                "hombros/torso=$ratioText giro=$yawText",
+            boxLeft,
+            nextY,
+            noteTextPaint,
+        )
+        current.analysisError?.let { error ->
+            canvas.drawText("ERROR ML Kit -> $error", boxLeft, nextY + 36f, noteTextPaint)
+        }
     }
 
     companion object {

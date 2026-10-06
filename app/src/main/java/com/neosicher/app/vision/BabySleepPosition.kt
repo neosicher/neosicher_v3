@@ -94,6 +94,16 @@ data class SleepPositionState(
     val sourceImageWidth: Int = 0,
     val sourceImageHeight: Int = 0,
     val personDetected: Boolean = false,
+    /** Diagnóstico: frames recibidos de la cámara (si no sube, el analizador no está enganchado). */
+    val framesReceived: Long = 0,
+    /** Diagnóstico: número de caras que ve el detector de rostros en este frame. */
+    val faceCount: Int = 0,
+    /** Diagnóstico: razón hombros/torso medida (null si los hombros no son fiables). */
+    val shoulderRatio: Float? = null,
+    /** Diagnóstico: giro horizontal de la cabeza en grados (null si no hay cara). */
+    val faceYawDegrees: Float? = null,
+    /** Diagnóstico: mensaje si falló algún modelo de ML Kit; null si todo bien. */
+    val analysisError: String? = null,
 ) {
     companion object {
         val EMPTY = SleepPositionState()

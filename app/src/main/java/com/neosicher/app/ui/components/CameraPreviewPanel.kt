@@ -147,8 +147,24 @@ private fun AndroidCameraContent(
                     scaleType = PreviewView.ScaleType.FILL_CENTER
                 }
             }
+            // Contenedor que aloja el PreviewView. El overlay de detección de
+            // postura (CameraManager.previewOverlay) se añade como HERMANO del
+            // PreviewView dentro de este contenedor, NUNCA como hijo suyo:
+            // CameraX ejecuta removeAllViews() sobre el PreviewView al arrancar
+            // la cámara y borraría cualquier hijo. Sin efecto visual propio.
+            val previewContainer = remember(previewView) {
+                FrameLayout(cameraManager.appContextForPreview()).apply {
+                    addView(
+                        previewView,
+                        FrameLayout.LayoutParams(
+                            FrameLayout.LayoutParams.MATCH_PARENT,
+                            FrameLayout.LayoutParams.MATCH_PARENT,
+                        ),
+                    )
+                }
+            }
             AndroidView(
-                factory = { previewView },
+                factory = { previewContainer },
                 modifier = Modifier.fillMaxSize(),
             )
             // Vincular / re-vincular cuando cambie la lente.

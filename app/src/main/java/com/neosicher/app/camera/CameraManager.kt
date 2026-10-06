@@ -125,18 +125,23 @@ class CameraManager(private val appContext: Context) {
     }
 
     /**
-     * Añade [previewOverlay] como vista hija del [previewView] si aún no lo
-     * está, ocupando todo el contenedor. Idempotente: si ya está adjunto al
-     * contenedor correcto no hace nada; si estaba en otro padre, lo mueve.
+     * Añade [previewOverlay] como HERMANO del [previewView] (en su mismo
+     * contenedor), por encima de él. NO puede ser hijo del PreviewView: CameraX
+     * llama a removeAllViews() sobre él cuando la cámara entrega su superficie
+     * (SurfaceViewImplementation/TextureViewImplementation.initializePreview)
+     * y borraría el overlay. Idempotente; si el overlay estaba en otro
+     * contenedor (p. ej. tras cambiar de modo), lo mueve a este.
      */
     private fun attachOverlay(previewView: PreviewView) {
         val overlay = previewOverlay ?: return
-        val parent = overlay.parent
-        if (parent === previewView) return
-        if (parent is ViewGroup) {
-            parent.removeView(overlay)
+        val host = previewView.parent as? FrameLayout
+        if (host == null) {
+            Log.w(TAG, "El PreviewView no está dentro de un FrameLayout: no se puede mostrar el overlay")
+            return
         }
-        previewView.addView(
+        if (overlay.parent === host) return
+        (overlay.parent as? ViewGroup)?.removeView(overlay)
+        host.addView(
             overlay,
             FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
