@@ -154,6 +154,13 @@ private fun AndroidCameraContent(
             // la cámara y borraría cualquier hijo. Sin efecto visual propio.
             val previewContainer = remember(previewView) {
                 FrameLayout(cameraManager.appContextForPreview()).apply {
+                    // Imprescindible: AndroidView mide la vista con SUS layoutParams.
+                    // Sin esto el contenedor queda en WRAP_CONTENT y el visor
+                    // (y el overlay) se encogen al tamaño de la superficie.
+                    layoutParams = FrameLayout.LayoutParams(
+                        FrameLayout.LayoutParams.MATCH_PARENT,
+                        FrameLayout.LayoutParams.MATCH_PARENT,
+                    )
                     addView(
                         previewView,
                         FrameLayout.LayoutParams(

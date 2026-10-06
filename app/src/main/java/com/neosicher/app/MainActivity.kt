@@ -2,6 +2,7 @@ package com.neosicher.app
 
 import android.Manifest
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.fillMaxSize
@@ -36,6 +37,14 @@ class MainActivity : ComponentActivity() {
         // sistema (estado y navegación). Se ocultan y solo reaparecen con un
         // gesto deslizante temporal del usuario (BEHAVIOR_SHOW_TRANSIENT_BARS).
         enableImmersiveMode()
+
+        // Aviso temporal al abrir: dice qué build está corriendo de verdad.
+        // Si no aparece "v2.0.0", el teléfono tiene una copia vieja de la app.
+        val versionName = runCatching {
+            packageManager.getPackageInfo(packageName, 0).versionName
+        }.getOrNull() ?: "?"
+        Toast.makeText(this, "NEOSICHER v$versionName · build postura-v2", Toast.LENGTH_LONG).show()
+
         setContent {
             NeosicherTheme {
                 Surface(
