@@ -104,6 +104,10 @@ data class SleepPositionState(
     val faceYawDegrees: Float? = null,
     /** Diagnóstico: mensaje si falló algún modelo de ML Kit; null si todo bien. */
     val analysisError: String? = null,
+    /** Diagnóstico: true = se ve el pecho, false = la espalda, null = no concluyente. */
+    val chestFacing: Boolean? = null,
+    /** Diagnóstico: giro extra (0/90/180/270) aplicado a la imagen para encontrar al bebé. */
+    val extraRotationDegrees: Int = 0,
 ) {
     companion object {
         val EMPTY = SleepPositionState()

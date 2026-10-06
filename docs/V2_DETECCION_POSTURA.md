@@ -13,6 +13,16 @@ Rama: `feature/neosicher-v2` (la versión anterior sigue intacta en `develop`).
 
 Modelos usados (ambos on-device, sin internet): ML Kit Pose Detection y ML Kit Face Detection.
 
+## Mejoras de precisión (segunda iteración)
+
+1. **Búsqueda de rotación.** Los modelos de ML Kit esperan a la persona derecha. Un bebé tumbado visto desde arriba aparece en cualquier orientación. Si no se detecta cuerpo ni cara durante 4 frames, el analizador gira la imagen 90° y vuelve a probar; mantiene el giro mientras el bebé siga apareciendo. Los puntos se devuelven a las coordenadas del visor (`PoseGeometry.rotatedToDisplay`).
+2. **Pista pecho/espalda** (`PoseGeometry.chestFacing`): con el vector hombro derecho→izquierdo y el eje caderas→cabeza, el signo del producto cruzado dice si se ve el pecho o la espalda. No cambia al girar la imagen. Resuelve la ambigüedad "cabeza girada": con espalda visible es **boca abajo**; con pecho visible es solo **volteado**.
+3. Sin cara detectada pero con pecho visible se asume **boca arriba (confianza baja)** si la cara nunca se vio; **cara tapada** solo si la cara sí se veía antes y desapareció.
+
+**Verificado (simulación, kotlinc real):** el giro de imagen se deshace correctamente en 0/90/180/270°, el signo pecho/espalda no cambia al girar la imagen, y el clasificador responde como se describe en 10 escenarios.
+
+**HIPÓTESIS sin validar con bebés reales:** que ML Kit mantenga bien la izquierda/derecha anatómica con un cuerpo tumbado visto desde arriba. La línea de diagnóstico del visor muestra `se ve=pecho|espalda|--` para comprobarlo. Si en fotos de bebés boca arriba sale "espalda" de forma sistemática, el signo está invertido y se corrige con un solo cambio.
+
 ## Estabilidad y alerta
 
 - La etiqueta sale de una votación sobre ~2 s de frames: un frame con ruido no cambia el resultado.

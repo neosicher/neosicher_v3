@@ -20,6 +20,8 @@ data class FrameObservation(
     val shoulderRatio: Float?,
     val faceDetected: Boolean,
     val faceYawDegrees: Float?,
+    /** true = se ve el pecho, false = se ve la espalda, null = no concluyente (ver PoseGeometry.chestFacing). */
+    val chestFacing: Boolean? = null,
 )
 
 /** Resultado ya suavizado en el tiempo. */
@@ -131,13 +133,21 @@ class SleepPositionClassifier {
         val ratio = obs.shoulderRatio
         val lateralBody = obs.shouldersReliable && ratio != null && ratio < SIDE_RATIO_THRESHOLD
 
+        val chest = obs.chestFacing
+
         if (obs.faceDetected) {
             faceEverSeen = true
             sideSeenSinceFace = false
-            val yaw = abs(obs.faceYawDegrees ?: 0f)
+            val turned = abs(obs.faceYawDegrees ?: 0f) >= SIDE_YAW_THRESHOLD_DEG
             return when {
                 lateralBody -> SleepPosition.SIDE to 0.55f
-                yaw >= SIDE_YAW_THRESHOLD_DEG -> SleepPosition.SIDE to 0.45f
+                // Cabeza girada: con la espalda hacia la cámara es boca abajo
+                // (cara girada); con el pecho hacia la cámara, solo cabeza girada.
+                turned && chest == false -> SleepPosition.PRONE to 0.45f
+                turned -> SleepPosition.SIDE to 0.45f
+                // Cara de frente pero "espalda": contradictorio (un bebé boca abajo
+                // no mira de frente a la cámara); se confía en la cara, con menos confianza.
+                chest == false -> SleepPosition.SUPINE to 0.5f
                 else -> SleepPosition.SUPINE to 0.65f
             }
         }
@@ -148,10 +158,23 @@ class SleepPositionClassifier {
             sideSeenSinceFace = true
             return SleepPosition.SIDE to 0.45f
         }
-        return when {
-            faceEverSeen && !sideSeenSinceFace -> SleepPosition.FACE_COVERED to 0.4f
-            faceEverSeen -> SleepPosition.PRONE to 0.45f
-            else -> SleepPosition.PRONE to 0.35f
+        return when (chest) {
+            // Espalda hacia la cámara y sin cara: boca abajo.
+            false -> SleepPosition.PRONE to 0.5f
+            // Pecho hacia la cámara pero la cara no aparece: si antes se veía,
+            // se tapó; si nunca se vio, lo más probable es que el detector no
+            // la encuentre (cara pequeña/girada), no que esté tapada.
+            true -> if (faceEverSeen && !sideSeenSinceFace) {
+                SleepPosition.FACE_COVERED to 0.45f
+            } else {
+                SleepPosition.SUPINE to 0.35f
+            }
+            // Sin pista de pecho/espalda: solo la memoria de la cara.
+            null -> when {
+                faceEverSeen && !sideSeenSinceFace -> SleepPosition.FACE_COVERED to 0.4f
+                faceEverSeen -> SleepPosition.PRONE to 0.45f
+                else -> SleepPosition.PRONE to 0.35f
+            }
         }
     }
 

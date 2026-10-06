@@ -28,6 +28,11 @@ import kotlin.math.hypot
  * Combina ambos en una [FrameObservation] y la pasa al [SleepPositionClassifier],
  * que decide la postura y la alerta. Publica un [SleepPositionState] observable.
  *
+ * Búsqueda de rotación: los modelos esperan a la persona "derecha". Un bebé
+ * tumbado visto desde arriba aparece en cualquier orientación, así que si no se
+ * detecta nada durante unos frames se prueba girando la imagen 90° cada vez
+ * hasta encontrarlo, y se mantiene ese giro mientras siga apareciendo.
+ *
  * Se engancha al punto de extensión `CameraManager.imageAnalyzer`; no modifica
  * el dashboard ni CameraPreviewPanel. El overlay ([PoseOverlayView]) consume
  * el mismo StateFlow.
@@ -60,6 +65,14 @@ class BabyPoseAnalyzer : ImageAnalysis.Analyzer {
     /** Contador de frames recibidos (solo se toca desde el hilo de análisis). */
     private var framesReceived = 0L
 
+    /** Giro extra (0/90/180/270, sentido horario) aplicado a la imagen antes de ML Kit. */
+    @Volatile
+    private var extraRotation = 0
+
+    /** Frames seguidos sin encontrar ni cuerpo ni cara con el giro actual. */
+    @Volatile
+    private var missesInARow = 0
+
     private val _state = MutableStateFlow(SleepPositionState.EMPTY)
     val state: StateFlow<SleepPositionState> = _state.asStateFlow()
 
@@ -72,13 +85,14 @@ class BabyPoseAnalyzer : ImageAnalysis.Analyzer {
             imageProxy.close()
             return
         }
-        val rotation = imageProxy.imageInfo.rotationDegrees
-        val inputImage = InputImage.fromMediaImage(mediaImage, rotation)
+        val sensorRotation = imageProxy.imageInfo.rotationDegrees
+        val extra = extraRotation
+        val inputImage = InputImage.fromMediaImage(mediaImage, (sensorRotation + extra) % 360)
 
-        // Dimensiones de la imagen YA rotada (con 90/270° ancho y alto se intercambian).
+        // Tamaño de la imagen YA orientada para el visor (sin el giro extra).
         val imgW: Int
         val imgH: Int
-        if (rotation == 90 || rotation == 270) {
+        if (sensorRotation == 90 || sensorRotation == 270) {
             imgW = imageProxy.height
             imgH = imageProxy.width
         } else {
@@ -92,7 +106,7 @@ class BabyPoseAnalyzer : ImageAnalysis.Analyzer {
             .addOnSuccessListener { pose ->
                 faceDetector.process(inputImage)
                     .addOnSuccessListener { faces ->
-                        publish(pose, faces, imgW, imgH)
+                        publish(pose, faces, imgW, imgH, extra)
                     }
                     .addOnFailureListener { e ->
                         // Sin detector de rostro no se puede distinguir "cara
@@ -118,40 +132,55 @@ class BabyPoseAnalyzer : ImageAnalysis.Analyzer {
     }
 
     /** Combina pose + rostro, clasifica y publica el estado. */
-    private fun publish(pose: Pose, faces: List<Face>, imgW: Int, imgH: Int) {
+    private fun publish(pose: Pose, faces: List<Face>, imgW: Int, imgH: Int, extra: Int) {
+        val displayW = imgW.toFloat()
+        val displayH = imgH.toFloat()
         val allLandmarks = pose.allPoseLandmarks
-        val points = allLandmarks.map {
+
+        // Puntos para dibujar: se devuelven a las coordenadas del visor
+        // deshaciendo el giro extra aplicado para ML Kit.
+        val points = allLandmarks.map { landmark ->
+            val mapped = PoseGeometry.rotatedToDisplay(
+                landmark.position.x, landmark.position.y, extra, displayW, displayH,
+            )
             PosePoint(
-                type = it.landmarkType,
-                x = it.position.x,
-                y = it.position.y,
-                inFrameLikelihood = it.inFrameLikelihood,
+                type = landmark.landmarkType,
+                x = mapped.first,
+                y = mapped.second,
+                inFrameLikelihood = landmark.inFrameLikelihood,
             )
         }
 
         // Cara principal = la más grande.
         val mainFace: Face? = faces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }
-        val faceBox: FaceBox? = mainFace?.let {
-            FaceBox(
-                left = it.boundingBox.left.toFloat(),
-                top = it.boundingBox.top.toFloat(),
-                right = it.boundingBox.right.toFloat(),
-                bottom = it.boundingBox.bottom.toFloat(),
-            )
-        }
+        val faceBox: FaceBox? = mainFace?.let { face -> mapFaceBox(face, extra, displayW, displayH) }
 
         val shoulderGeometry = measureShoulders(pose, imgH)
+        val chestFacing = estimateChestFacing(pose)
+        val bodyFound = allLandmarks.isNotEmpty()
 
         val observation = FrameObservation(
             timestampMs = SystemClock.elapsedRealtime(),
-            bodyDetected = allLandmarks.isNotEmpty(),
+            bodyDetected = bodyFound,
             shouldersReliable = shoulderGeometry != null,
             shoulderRatio = shoulderGeometry,
             faceDetected = mainFace != null,
             faceYawDegrees = mainFace?.headEulerAngleY,
+            chestFacing = chestFacing,
         )
 
         val result = classifier.update(observation)
+
+        // Búsqueda de rotación: si no hay nada, probar el siguiente giro.
+        if (bodyFound || mainFace != null) {
+            missesInARow = 0
+        } else {
+            missesInARow++
+            if (missesInARow >= SCAN_AFTER_MISSES) {
+                extraRotation = (extra + 90) % 360
+                missesInARow = 0
+            }
+        }
 
         _state.value = SleepPositionState(
             position = result.position,
@@ -161,11 +190,32 @@ class BabyPoseAnalyzer : ImageAnalysis.Analyzer {
             faceBox = faceBox,
             sourceImageWidth = imgW,
             sourceImageHeight = imgH,
-            personDetected = allLandmarks.isNotEmpty() || mainFace != null,
+            personDetected = bodyFound || mainFace != null,
             framesReceived = framesReceived,
             faceCount = faces.size,
             shoulderRatio = shoulderGeometry,
             faceYawDegrees = mainFace?.headEulerAngleY,
+            chestFacing = chestFacing,
+            extraRotationDegrees = extra,
+        )
+    }
+
+    /** Devuelve el recuadro de la cara a coordenadas del visor (deshaciendo el giro extra). */
+    private fun mapFaceBox(face: Face, extra: Int, displayW: Float, displayH: Float): FaceBox {
+        val box = face.boundingBox
+        val corners = listOf(
+            box.left.toFloat() to box.top.toFloat(),
+            box.right.toFloat() to box.top.toFloat(),
+            box.left.toFloat() to box.bottom.toFloat(),
+            box.right.toFloat() to box.bottom.toFloat(),
+        ).map { corner ->
+            PoseGeometry.rotatedToDisplay(corner.first, corner.second, extra, displayW, displayH)
+        }
+        return FaceBox(
+            left = corners.minOf { it.first },
+            top = corners.minOf { it.second },
+            right = corners.maxOf { it.first },
+            bottom = corners.maxOf { it.second },
         )
     }
 
@@ -196,6 +246,47 @@ class BabyPoseAnalyzer : ImageAnalysis.Analyzer {
         }
     }
 
+    /**
+     * ¿Pecho o espalda hacia la cámara? Usa los hombros y el eje caderas->cabeza
+     * (o hombros->nariz si las caderas no se ven). Ver [PoseGeometry.chestFacing]:
+     * es una HIPÓTESIS por validar con bebés reales. null = no concluyente.
+     */
+    private fun estimateChestFacing(pose: Pose): Boolean? {
+        val leftShoulder = pose.getPoseLandmark(PoseLandmark.LEFT_SHOULDER)
+        val rightShoulder = pose.getPoseLandmark(PoseLandmark.RIGHT_SHOULDER)
+        if (leftShoulder == null || rightShoulder == null) return null
+        if (leftShoulder.inFrameLikelihood < MIN_LIKELIHOOD || rightShoulder.inFrameLikelihood < MIN_LIKELIHOOD) {
+            return null
+        }
+        val shoulderMidX = (leftShoulder.position.x + rightShoulder.position.x) / 2f
+        val shoulderMidY = (leftShoulder.position.y + rightShoulder.position.y) / 2f
+
+        val hips = listOfNotNull(
+            pose.getPoseLandmark(PoseLandmark.LEFT_HIP),
+            pose.getPoseLandmark(PoseLandmark.RIGHT_HIP),
+        ).filter { it.inFrameLikelihood >= MIN_LIKELIHOOD }
+
+        val axisX: Float
+        val axisY: Float
+        if (hips.isNotEmpty()) {
+            // Eje cadera -> hombros (hacia la cabeza).
+            axisX = shoulderMidX - hips.map { it.position.x }.average().toFloat()
+            axisY = shoulderMidY - hips.map { it.position.y }.average().toFloat()
+        } else {
+            // Sin caderas: eje hombros -> nariz.
+            val nose = pose.getPoseLandmark(PoseLandmark.NOSE)
+            if (nose == null || nose.inFrameLikelihood < MIN_LIKELIHOOD) return null
+            axisX = nose.position.x - shoulderMidX
+            axisY = nose.position.y - shoulderMidY
+        }
+
+        return PoseGeometry.chestFacing(
+            leftShoulder.position.x, leftShoulder.position.y,
+            rightShoulder.position.x, rightShoulder.position.y,
+            axisX, axisY,
+        )
+    }
+
     private fun distance(a: PoseLandmark, b: PoseLandmark): Float =
         hypot(
             (a.position.x - b.position.x).toDouble(),
@@ -211,5 +302,8 @@ class BabyPoseAnalyzer : ImageAnalysis.Analyzer {
     companion object {
         private const val TAG = "BabyPoseAnalyzer"
         private const val MIN_LIKELIHOOD = 0.5f
+
+        /** Frames seguidos sin detectar nada antes de probar otro giro de imagen. */
+        private const val SCAN_AFTER_MISSES = 4
     }
 }

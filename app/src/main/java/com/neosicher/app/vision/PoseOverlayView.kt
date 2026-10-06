@@ -220,9 +220,21 @@ class PoseOverlayView(context: Context) : View(context) {
         val ratioText = current.shoulderRatio?.let { "%.2f".format(it) } ?: "--"
         val yawText = current.faceYawDegrees?.let { "%.0f°".format(it) } ?: "--"
         val bodyText = if (current.landmarks.isNotEmpty()) "sí" else "no"
+        val chestText = when (current.chestFacing) {
+            true -> "pecho"
+            false -> "espalda"
+            null -> "--"
+        }
         canvas.drawText(
             "frames=${current.framesReceived} cuerpo=$bodyText caras=${current.faceCount} " +
                 "hombros/torso=$ratioText giro=$yawText",
+            boxLeft,
+            nextY,
+            noteTextPaint,
+        )
+        nextY += dp(16f)
+        canvas.drawText(
+            "se ve=$chestText imagen girada=${current.extraRotationDegrees}°",
             boxLeft,
             nextY,
             noteTextPaint,
