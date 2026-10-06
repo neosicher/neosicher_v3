@@ -1,10 +1,15 @@
 package com.neosicher.app.vision
 
 import android.annotation.SuppressLint
+import android.os.SystemClock
 import android.util.Log
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.face.Face
+import com.google.mlkit.vision.face.FaceDetection
+import com.google.mlkit.vision.face.FaceDetector
+import com.google.mlkit.vision.face.FaceDetectorOptions
 import com.google.mlkit.vision.pose.Pose
 import com.google.mlkit.vision.pose.PoseDetection
 import com.google.mlkit.vision.pose.PoseDetector
@@ -13,35 +18,44 @@ import com.google.mlkit.vision.pose.defaults.PoseDetectorOptions
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlin.math.abs
 import kotlin.math.hypot
 
 /**
- * [ImageAnalysis.Analyzer] que corre ML Kit Pose Detection (on-device) sobre
- * cada frame del preview de la cámara Android, estima la postura al dormir del
- * bebé y publica un [SleepPositionState] observable.
+ * NEOSICHER v2 — analiza cada frame del preview de la cámara Android con dos
+ * modelos de ML Kit que corren en el teléfono (sin internet):
+ *   1. Pose Detection: esqueleto del cuerpo (hombros, caderas...).
+ *   2. Face Detection: si hay una cara y hacia dónde está girada.
+ * Combina ambos en una [FrameObservation] y la pasa al [SleepPositionClassifier],
+ * que decide la postura y la alerta. Publica un [SleepPositionState] observable.
  *
- * Se engancha al punto de extensión `CameraManager.imageAnalyzer` que ya
- * existía reservado para "detección/ubicación del bebé" — NO modifica el
- * dashboard ni CameraPreviewPanel. El overlay en tiempo real (ver
- * [PoseOverlayView]) consume este mismo StateFlow.
+ * Se engancha al punto de extensión `CameraManager.imageAnalyzer`; no modifica
+ * el dashboard ni CameraPreviewPanel. El overlay ([PoseOverlayView]) consume
+ * el mismo StateFlow.
  *
- * HONESTIDAD / REGLA DEL PROYECTO (docs/GW192A_INVESTIGACION.md §9, §10):
- *  - La clasificación de postura es una HEURÍSTICA GEOMÉTRICA sobre los
- *    landmarks (hombros/caderas/nariz), no una medición certificada.
- *  - Los modelos de pose están entrenados mayoritariamente con adultos de pie;
- *    en bebés acostados la exactitud no está garantizada. Por eso ante
- *    cualquier duda se devuelve [SleepPosition.UNKNOWN] en vez de forzar una
- *    clasificación.
+ * HONESTIDAD (docs/GW192A_INVESTIGACION.md §9, §10): es una HEURÍSTICA sobre
+ * modelos entrenados mayormente con adultos. En bebés acostados, envueltos o
+ * con poca luz la exactitud NO está garantizada. Ante duda devuelve UNKNOWN.
  */
 class BabyPoseAnalyzer : ImageAnalysis.Analyzer {
 
-    private val detector: PoseDetector = PoseDetection.getClient(
+    private val poseDetector: PoseDetector = PoseDetection.getClient(
         PoseDetectorOptions.Builder()
-            // STREAM_MODE: optimizado para vídeo en vivo (reutiliza predicción previa).
+            // STREAM_MODE: optimizado para vídeo en vivo.
             .setDetectorMode(PoseDetectorOptions.STREAM_MODE)
             .build()
     )
+
+    private val faceDetector: FaceDetector = FaceDetection.getClient(
+        FaceDetectorOptions.Builder()
+            .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
+            .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_NONE)
+            .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_NONE)
+            // La cara de un bebé a distancia ocupa poco del encuadre.
+            .setMinFaceSize(0.08f)
+            .build()
+    )
+
+    private val classifier = SleepPositionClassifier()
 
     private val _state = MutableStateFlow(SleepPositionState.EMPTY)
     val state: StateFlow<SleepPositionState> = _state.asStateFlow()
@@ -56,55 +70,45 @@ class BabyPoseAnalyzer : ImageAnalysis.Analyzer {
         val rotation = imageProxy.imageInfo.rotationDegrees
         val inputImage = InputImage.fromMediaImage(mediaImage, rotation)
 
-        // Dimensiones de la imagen YA rotada: tras una rotación de 90/270°,
-        // ancho y alto se intercambian respecto al buffer original. Esto es lo
-        // que el overlay necesita para escalar los landmarks correctamente.
-        val (imgW, imgH) = if (rotation == 90 || rotation == 270) {
-            imageProxy.height to imageProxy.width
+        // Dimensiones de la imagen YA rotada (con 90/270° ancho y alto se intercambian).
+        val imgW: Int
+        val imgH: Int
+        if (rotation == 90 || rotation == 270) {
+            imgW = imageProxy.height
+            imgH = imageProxy.width
         } else {
-            imageProxy.width to imageProxy.height
+            imgW = imageProxy.width
+            imgH = imageProxy.height
         }
 
-        detector.process(inputImage)
+        // Pose primero, luego rostro sobre la MISMA imagen. El ImageProxy se
+        // cierra solo al terminar ambos (o al fallar), para liberar el frame.
+        poseDetector.process(inputImage)
             .addOnSuccessListener { pose ->
-                _state.value = classify(pose, imgW, imgH)
+                faceDetector.process(inputImage)
+                    .addOnSuccessListener { faces ->
+                        publish(pose, faces, imgW, imgH)
+                    }
+                    .addOnFailureListener { e ->
+                        // Sin detector de rostro no se puede distinguir "cara
+                        // tapada": mejor no opinar que dar una falsa alerta.
+                        Log.w(TAG, "Fallo en detección de rostro", e)
+                        _state.value = SleepPositionState.EMPTY
+                    }
+                    .addOnCompleteListener {
+                        imageProxy.close()
+                    }
             }
             .addOnFailureListener { e ->
                 Log.w(TAG, "Fallo en detección de pose", e)
                 _state.value = SleepPositionState.EMPTY
-            }
-            .addOnCompleteListener {
-                // Imprescindible cerrar el ImageProxy para liberar el frame y
-                // permitir que llegue el siguiente (STRATEGY_KEEP_ONLY_LATEST).
                 imageProxy.close()
             }
     }
 
-    /**
-     * Clasifica la postura a partir de la geometría de los landmarks clave.
-     *
-     * Lógica (heurística, conservadora):
-     *  - Si no hay suficientes puntos fiables → UNKNOWN.
-     *  - Distancia horizontal entre hombros (y entre caderas) GRANDE respecto a
-     *    la altura torso ⇒ el cuerpo se ve "de frente" (boca arriba o boca
-     *    abajo). Para distinguir supino vs prono se usa la posición de la nariz
-     *    respecto a los hombros y la visibilidad de puntos faciales:
-     *      · Cara/ojos bien visibles y nariz entre los hombros ⇒ SUPINE.
-     *      · Cara poco visible (nuca hacia la cámara) ⇒ PRONE.
-     *  - Hombros muy juntos horizontalmente (uno oculta al otro) ⇒ SIDE.
-     *
-     * Devuelve confianza conservadora (máx 0.6) para no transmitir falsa certeza.
-     */
-    private fun classify(pose: Pose, imgW: Int, imgH: Int): SleepPositionState {
+    /** Combina pose + rostro, clasifica y publica el estado. */
+    private fun publish(pose: Pose, faces: List<Face>, imgW: Int, imgH: Int) {
         val allLandmarks = pose.allPoseLandmarks
-        if (allLandmarks.isEmpty()) {
-            return SleepPositionState(
-                sourceImageWidth = imgW,
-                sourceImageHeight = imgH,
-                personDetected = false,
-            )
-        }
-
         val points = allLandmarks.map {
             PosePoint(
                 type = it.landmarkType,
@@ -114,117 +118,83 @@ class BabyPoseAnalyzer : ImageAnalysis.Analyzer {
             )
         }
 
-        val leftShoulder = pose.getPoseLandmark(PoseLandmark.LEFT_SHOULDER)
-        val rightShoulder = pose.getPoseLandmark(PoseLandmark.RIGHT_SHOULDER)
-        val leftHip = pose.getPoseLandmark(PoseLandmark.LEFT_HIP)
-        val rightHip = pose.getPoseLandmark(PoseLandmark.RIGHT_HIP)
-        val nose = pose.getPoseLandmark(PoseLandmark.NOSE)
-        val leftEye = pose.getPoseLandmark(PoseLandmark.LEFT_EYE)
-        val rightEye = pose.getPoseLandmark(PoseLandmark.RIGHT_EYE)
-
-        // Necesitamos al menos ambos hombros con confianza razonable para intentar clasificar.
-        val minLikelihood = 0.5f
-        val shouldersReliable = leftShoulder != null && rightShoulder != null &&
-            leftShoulder.inFrameLikelihood >= minLikelihood &&
-            rightShoulder.inFrameLikelihood >= minLikelihood
-
-        if (!shouldersReliable) {
-            return SleepPositionState(
-                position = SleepPosition.UNKNOWN,
-                confidence = 0f,
-                landmarks = points,
-                sourceImageWidth = imgW,
-                sourceImageHeight = imgH,
-                personDetected = true,
+        // Cara principal = la más grande.
+        val mainFace: Face? = faces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }
+        val faceBox: FaceBox? = mainFace?.let {
+            FaceBox(
+                left = it.boundingBox.left.toFloat(),
+                top = it.boundingBox.top.toFloat(),
+                right = it.boundingBox.right.toFloat(),
+                bottom = it.boundingBox.bottom.toFloat(),
             )
         }
 
-        val shoulderWidth = hypot(
-            (leftShoulder!!.position.x - rightShoulder!!.position.x).toDouble(),
-            (leftShoulder.position.y - rightShoulder.position.y).toDouble(),
-        ).toFloat()
+        val shoulderGeometry = measureShoulders(pose, imgH)
 
-        // Longitud de referencia del torso: distancia media hombro→cadera.
-        val torsoLength: Float = run {
-            val pairs = buildList {
-                if (leftHip != null) add(
-                    hypot(
-                        (leftShoulder.position.x - leftHip.position.x).toDouble(),
-                        (leftShoulder.position.y - leftHip.position.y).toDouble(),
-                    ).toFloat()
-                )
-                if (rightHip != null) add(
-                    hypot(
-                        (rightShoulder.position.x - rightHip.position.x).toDouble(),
-                        (rightShoulder.position.y - rightHip.position.y).toDouble(),
-                    ).toFloat()
-                )
-            }
-            if (pairs.isEmpty()) 0f else pairs.average().toFloat()
-        }
+        val observation = FrameObservation(
+            timestampMs = SystemClock.elapsedRealtime(),
+            bodyDetected = allLandmarks.isNotEmpty(),
+            shouldersReliable = shoulderGeometry != null,
+            shoulderRatio = shoulderGeometry,
+            faceDetected = mainFace != null,
+            faceYawDegrees = mainFace?.headEulerAngleY,
+        )
 
-        // Razón ancho de hombros / largo de torso. Si no hay torso fiable, se
-        // normaliza con el tamaño de la imagen como fallback conservador.
-        val ratio = when {
-            torsoLength > 1f -> shoulderWidth / torsoLength
-            imgH > 0 -> shoulderWidth / (imgH * 0.3f)
-            else -> 0f
-        }
+        val result = classifier.update(observation)
 
-        // Cara visible: ayuda a distinguir supino (cara a cámara) de prono (nuca).
-        val faceVisible = listOfNotNull(nose, leftEye, rightEye)
-            .count { it.inFrameLikelihood >= minLikelihood } >= 2
-
-        // Heurística principal.
-        //  ratio pequeño  ⇒ hombros "colapsados" en horizontal ⇒ de lado.
-        //  ratio grande   ⇒ cuerpo de frente ⇒ supino (cara visible) o prono.
-        val (position, confidence) = when {
-            ratio < SIDE_RATIO_THRESHOLD ->
-                SleepPosition.SIDE to 0.5f
-
-            faceVisible ->
-                SleepPosition.SUPINE to 0.6f
-
-            else ->
-                // Cuerpo de frente pero cara no visible: probable boca abajo.
-                SleepPosition.PRONE to 0.45f
-        }
-
-        // Ajuste extra: si la nariz está claramente fuera del rango vertical de
-        // los hombros, baja la confianza (postura ambigua / cuerpo girado).
-        val adjustedConfidence = run {
-            if (nose != null && nose.inFrameLikelihood >= minLikelihood) {
-                val shoulderMidY = (leftShoulder.position.y + rightShoulder.position.y) / 2f
-                val verticalGap = abs(nose.position.y - shoulderMidY)
-                if (torsoLength > 1f && verticalGap > torsoLength * 1.2f) {
-                    (confidence - 0.15f).coerceAtLeast(0.2f)
-                } else confidence
-            } else confidence
-        }
-
-        return SleepPositionState(
-            position = position,
-            confidence = adjustedConfidence,
+        _state.value = SleepPositionState(
+            position = result.position,
+            confidence = result.confidence,
+            isAlert = result.isAlert,
             landmarks = points,
+            faceBox = faceBox,
             sourceImageWidth = imgW,
             sourceImageHeight = imgH,
-            personDetected = true,
+            personDetected = allLandmarks.isNotEmpty() || mainFace != null,
         )
     }
 
-    /** Libera el detector de ML Kit. Llamar al soltar la cámara. */
+    /**
+     * Razón ancho-de-hombros / largo-de-torso, o null si los hombros no son
+     * fiables. Un valor bajo indica cuerpo de lado (un hombro oculta al otro).
+     */
+    private fun measureShoulders(pose: Pose, imgH: Int): Float? {
+        val leftShoulder = pose.getPoseLandmark(PoseLandmark.LEFT_SHOULDER)
+        val rightShoulder = pose.getPoseLandmark(PoseLandmark.RIGHT_SHOULDER)
+        if (leftShoulder == null || rightShoulder == null) return null
+        if (leftShoulder.inFrameLikelihood < MIN_LIKELIHOOD || rightShoulder.inFrameLikelihood < MIN_LIKELIHOOD) {
+            return null
+        }
+
+        val shoulderWidth = distance(leftShoulder, rightShoulder)
+
+        val torsoSamples = mutableListOf<Float>()
+        pose.getPoseLandmark(PoseLandmark.LEFT_HIP)?.let { torsoSamples.add(distance(leftShoulder, it)) }
+        pose.getPoseLandmark(PoseLandmark.RIGHT_HIP)?.let { torsoSamples.add(distance(rightShoulder, it)) }
+        val torsoLength = if (torsoSamples.isEmpty()) 0f else torsoSamples.average().toFloat()
+
+        return when {
+            torsoLength > 1f -> shoulderWidth / torsoLength
+            // Caderas tapadas (manta): referencia aproximada por la altura de la imagen.
+            imgH > 0 -> shoulderWidth / (imgH * 0.3f)
+            else -> null
+        }
+    }
+
+    private fun distance(a: PoseLandmark, b: PoseLandmark): Float =
+        hypot(
+            (a.position.x - b.position.x).toDouble(),
+            (a.position.y - b.position.y).toDouble(),
+        ).toFloat()
+
+    /** Libera los detectores de ML Kit. Llamar al soltar la cámara. */
     fun close() {
-        runCatching { detector.close() }
+        runCatching { poseDetector.close() }
+        runCatching { faceDetector.close() }
     }
 
     companion object {
         private const val TAG = "BabyPoseAnalyzer"
-
-        /**
-         * Por debajo de esta razón ancho-hombros / largo-torso se considera que
-         * el bebé está de lado (un hombro oculta al otro). Valor empírico
-         * conservador; ajustable tras pruebas reales en el POCO F7.
-         */
-        private const val SIDE_RATIO_THRESHOLD = 0.45f
+        private const val MIN_LIKELIHOOD = 0.5f
     }
 }

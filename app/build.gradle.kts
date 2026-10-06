@@ -12,8 +12,8 @@ android {
         applicationId = "com.neosicher.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0-mvp"
+        versionCode = 2
+        versionName = "2.0.0"
 
         vectorDrawables {
             useSupportLibrary = true
@@ -82,6 +82,9 @@ dependencies {
 
     // ML Kit Pose Detection — estimación de postura del bebé (on-device).
     implementation(libs.mlkit.pose.detection)
+
+    // ML Kit Face Detection — v2: detectar si la cara está visible/girada/tapada.
+    implementation(libs.mlkit.face.detection)
 
     debugImplementation(libs.androidx.ui.tooling)
 }

@@ -9,6 +9,7 @@ camerax = "1.4.1"
 accompanistPermissions = "0.36.0"
 coroutines = "1.9.0"
 mlkitPoseDetection = "18.0.0-beta5"
+mlkitFaceDetection = "16.1.7"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -39,6 +40,10 @@ kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-
 # cuerpo. EXPERIMENTAL: los modelos de pose están entrenados mayoritariamente
 # con adultos; en bebés la exactitud no está garantizada (ver notas en código).
 mlkit-pose-detection = { group = "com.google.mlkit", name = "pose-detection", version.ref = "mlkitPoseDetection" }
+
+# ML Kit Face Detection (on-device). v2: permite saber si hay una cara visible
+# y hacia dónde está girada, para distinguir boca arriba / volteado / cara tapada.
+mlkit-face-detection = { group = "com.google.mlkit", name = "face-detection", version.ref = "mlkitFaceDetection" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
