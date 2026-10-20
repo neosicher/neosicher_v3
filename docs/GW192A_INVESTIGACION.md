@@ -654,3 +654,53 @@ Theocalibration de cámaras térmicas no enfriadas, NIST HB.157, MDPI 20/11/3316
 - **Nunca debe presentarse como diagnóstico médico** (regla ya establecida en la
   sección 6 y 14 original del documento): es una aproximación experimental, con una
   confianza reportada deliberadamente baja (`confidence` 0.3–0.6).
+
+---
+
+## 15. Laboratorio térmico: puntos, captura de datos raw y °C (rama `feature/neosicher-v2`)
+
+### 15.1 Qué se pidió y qué es posible (honesto)
+
+El usuario pidió identificar puntos termográficos y convertir raw a °C. Dado lo ya CONFIRMADO
+(§13.5, §13.6: ningún formato del GW192A transporta datos radiométricos de 16 bits), esto se
+resuelve con medición **relativa** de puntos + calibración **empírica** del usuario (§14), no
+con una lectura radiométrica. El valor raw es la **luminancia (Y)** del frame, 0..255.
+
+### 15.2 Qué se implementó
+
+- **Puntos:** más caliente, más frío, centro y un **punto elegido** (tocando la imagen). Cada
+  uno muestra raw y, solo si hay calibración, °C aproximados (`*` = fuera del rango calibrado).
+  Marcadores visibles también en el visor del panel principal (solo en modo térmico).
+- **Captura de datos:** "Guardar frame RAW" escribe los bytes EXACTOS que envió la cámara
+  (`.bin`) y su descripción (`.txt`) en `Android/data/com.neosicher.app/files/thermal/`;
+  "Grabar mediciones CSV" guarda una fila por frame.
+- **"Analizar frame":** describe cómo está armado el frame (bytes recibidos vs esperados,
+  canales Y/U/V, filas extra bajo la imagen en `96x100`, bytes sobrantes, volcado hexadecimal).
+- **Promedio de ~8 frames** al capturar un punto de calibración (reduce ruido).
+- **Calibración persistente** (SharedPreferences) y calidad de la recta (°C por nivel, error
+  máximo, aviso de extrapolación).
+- La tarjeta Temperatura usa el punto elegido (o el centro); su confianza baja a 0.2 si la
+  lectura es extrapolada o hay sospecha de AGC.
+
+### 15.3 Evidencia
+
+- **CONFIRMADO (simulación con kotlinc real, 37 comprobaciones):** estadísticas, localización
+  de extremos (ignora un píxel ruidoso aislado), descripción del frame, vigilancia de AGC, fps,
+  recta de calibración y extrapolación, geometría imagen↔vista.
+- **NO PROBADO en hardware real:** todo lo anterior con el GW192A en el POCO F7.
+
+### 15.4 Preguntas abiertas que este laboratorio permite responder con datos
+
+1. **¿La cámara reescala el contraste en cada frame (AGC)?** Si cada frame ocupa 0..255,
+   raw→°C fija NO es válida. Prueba: apuntar a una pared y acercar una mano; si el valor de la
+   pared cambia, hay AGC. La app muestra un veredicto orientativo (HIPÓTESIS, no prueba).
+2. **¿Hay información fuera del plano Y?** "Analizar frame" informa si el croma U/V varía y
+   qué contienen las 4 filas extra del formato `96x100`. Hasta ver bytes reales, es
+   **NO DETERMINADO** (no se asume telemetría ni temperatura ahí).
+3. **¿Cuántos niveles reales entrega?** El número de niveles distintos limita la resolución
+   en °C.
+
+### 15.5 Límites que no desaparecen
+
+Sin emisividad, distancia ni compensación ambiental, y con un sensor no radiométrico, el °C es
+una aproximación local EXPERIMENTAL. No es medición médica.

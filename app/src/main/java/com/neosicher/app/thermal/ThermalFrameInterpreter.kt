@@ -84,6 +84,8 @@ object ThermalFrameInterpreter {
             rawLuma = luma,
             rawWidth = width,
             rawHeight = height,
+            rawFrameBytes = frameBytes,
+            fourCc = format.fourCc,
         )
     }
 
@@ -185,6 +187,12 @@ data class ThermalFrameResult(
     val rawLuma: IntArray? = null,
     val rawWidth: Int = 0,
     val rawHeight: Int = 0,
+    /** Bytes EXACTOS que envió la cámara para este frame (para analizar/guardar). */
+    val rawFrameBytes: ByteArray? = null,
+    /** FourCC real del formato (NV12, YUY2...), o null. */
+    val fourCc: String? = null,
+    /** Mediciones por puntos (más caliente/frío/centro/elegido), calculadas por el ViewModel. */
+    val measurements: ThermalMeasurements? = null,
 ) {
     /**
      * Promedio de luminancia en una pequeña ventana cuadrada centrada en el

@@ -37,6 +37,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.neosicher.app.thermal.CalibrationPointKind
 import com.neosicher.app.thermal.ThermalCalibration
+import com.neosicher.app.thermal.ThermalCameraState
+import com.neosicher.app.thermal.ThermalSpot
 import com.neosicher.app.ui.theme.NeoColors
 import com.neosicher.app.ui.theme.NeoDimens
 import com.neosicher.app.ui.theme.NeoGradients
@@ -72,6 +74,16 @@ fun ThermalCalibrationScreen(
     onClearPoint: (CalibrationPointKind) -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    // -- Laboratorio térmico en vivo (todo opcional: sin ellos la pantalla se ve como antes) --
+    thermalState: ThermalCameraState? = null,
+    spot: ThermalSpot? = null,
+    onSpotChange: (ThermalSpot?) -> Unit = {},
+    onAnalyzeFrame: () -> List<String> = { emptyList() },
+    onSaveRawFrame: () -> Unit = {},
+    isRecording: Boolean = false,
+    onToggleRecording: () -> Unit = {},
+    labMessage: String? = null,
+    onDismissLabMessage: () -> Unit = {},
 ) {
     Box(
         modifier = modifier
@@ -113,12 +125,28 @@ fun ThermalCalibrationScreen(
                 style = MaterialTheme.typography.bodyMedium,
             )
 
+            if (thermalState != null) {
+                ThermalLabSection(
+                    thermalState = thermalState,
+                    calibration = calibration,
+                    spot = spot,
+                    onSpotChange = onSpotChange,
+                    onAnalyzeFrame = onAnalyzeFrame,
+                    onSaveRawFrame = onSaveRawFrame,
+                    isRecording = isRecording,
+                    onToggleRecording = onToggleRecording,
+                    labMessage = labMessage,
+                    onDismissMessage = onDismissLabMessage,
+                )
+            }
+
             CalibrationStatusCard(calibration)
 
             CalibrationPointEditor(
                 title = "1. Punto frío conocido",
-                hint = "Mide con tu otro sensor un punto frío (p. ej. agua fría) y apunta " +
-                    "el GW192A ahí. Luego pulsa \"Tomar lectura\" y escribe la temperatura real.",
+                hint = "Mide con tu otro sensor un punto frío (p. ej. agua fría), apunta " +
+                    "el GW192A ahí y toca ese punto en la imagen de arriba. Luego pulsa " +
+                    "\"Tomar lectura\" (promedia ~8 frames) y escribe la temperatura real.",
                 existing = calibration.coldPoint,
                 latestRawValueProvider = latestRawValueProvider,
                 defaultKnownC = "10.0",

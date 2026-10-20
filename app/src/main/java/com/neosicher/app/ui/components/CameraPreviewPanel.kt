@@ -245,14 +245,12 @@ private fun ThermalContent(thermalState: ThermalCameraState) {
  */
 @Composable
 private fun ThermalStreamContent(frame: com.neosicher.app.thermal.ThermalFrameResult) {
-    val bitmap = frame.thermalPaletteBitmap ?: frame.visibleBitmap
     Box(modifier = Modifier.fillMaxSize()) {
-        Image(
-            bitmap = bitmap.asImageBitmap(),
-            contentDescription = "Stream térmico experimental (sin calibrar)",
+        // Imagen térmica + marcadores de puntos (más caliente / más frío / centro
+        // / punto elegido). Ver ThermalImageView. Solo se ve en modo térmico.
+        ThermalImageView(
+            frame = frame,
             modifier = Modifier.fillMaxSize(),
-            contentScale = ContentScale.Fit,
-            filterQuality = androidx.compose.ui.graphics.FilterQuality.None,
         )
 
         // Aviso permanente: nunca se debe interpretar esto como temperatura real.
@@ -267,10 +265,12 @@ private fun ThermalStreamContent(frame: com.neosicher.app.thermal.ThermalFrameRe
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text(
-                text = if (frame.rawMin != null && frame.rawMax != null) {
-                    "Experimental · sin calibrar · raw[${frame.rawMin}–${frame.rawMax}]"
-                } else {
-                    "Experimental · sin calibrar"
+                text = when {
+                    frame.measurements?.calibrated == true ->
+                        "Experimental · °C aproximados (calibración del usuario)"
+                    frame.rawMin != null && frame.rawMax != null ->
+                        "Experimental · sin calibrar · raw[${frame.rawMin}–${frame.rawMax}]"
+                    else -> "Experimental · sin calibrar"
                 },
                 color = NeoColors.Background,
                 fontWeight = FontWeight.SemiBold,

@@ -1,5 +1,7 @@
 package com.neosicher.app.thermal
 
+import kotlin.math.abs
+
 /**
  * Calibración empírica del GW192A: convierte luminancia cruda (raw 0..255,
  * ya procesada internamente por la cámara — ver docs/GW192A_INVESTIGACION.md
@@ -89,6 +91,41 @@ data class ThermalCalibration(
     fun toCelsius(rawValue: Double): Double? {
         val (slope, intercept) = fitLine() ?: return null
         return slope * rawValue + intercept
+    }
+
+    /**
+     * Datos de la recta ajustada, para mostrar al usuario qué tan fiable es:
+     *  - [slopeCelsiusPerLevel]: °C que representa cada nivel de luminancia
+     *    (la "resolución" de la aproximación).
+     *  - [maxResidualCelsius]: mayor diferencia entre la recta y alguno de los
+     *    puntos que el usuario midió. Con 2 puntos siempre es 0 (la recta pasa
+     *    exacta por ambos), así que NO prueba que la aproximación sea buena;
+     *    con 3 puntos sí delata si no son coherentes con una recta.
+     */
+    data class FitInfo(
+        val slopeCelsiusPerLevel: Double,
+        val interceptCelsius: Double,
+        val maxResidualCelsius: Double,
+        val pointCount: Int,
+    )
+
+    /** Información de la recta ajustada, o null si no hay calibración suficiente. */
+    fun fitInfo(): FitInfo? {
+        val (slope, intercept) = fitLine() ?: return null
+        val pts = points
+        val residual = pts.maxOf { abs(slope * it.rawValue + intercept - it.knownTemperatureCelsius) }
+        return FitInfo(slope, intercept, residual, pts.size)
+    }
+
+    /**
+     * true si [rawValue] queda fuera del intervalo cubierto por los puntos
+     * medidos por el usuario. Fuera de ese intervalo la recta es una
+     * EXTRAPOLACIÓN (menos fiable): la UI lo marca con "*".
+     */
+    fun isExtrapolated(rawValue: Double): Boolean {
+        val raws = points.map { it.rawValue }
+        if (raws.isEmpty()) return false
+        return rawValue < raws.min() || rawValue > raws.max()
     }
 
     companion object {
