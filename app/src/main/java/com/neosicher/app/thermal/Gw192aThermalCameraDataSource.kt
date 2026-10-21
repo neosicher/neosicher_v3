@@ -87,6 +87,15 @@ class Gw192aThermalCameraDataSource(
     }
 
     override fun detect() {
+        // Si el stream YA está en marcha, no reiniciarlo. selectMode() llama a
+        // detect() cada vez que se elige el modo térmico (también al tocar la
+        // pestaña en la que ya se está); reabrir la conexión mientras la sesión
+        // anterior sigue teniendo reclamada la interfaz hace que TODOS los
+        // formatos fallen y el visor pase a "Stream térmico no disponible".
+        if (streamingSession != null && _state.value.status == ThermalConnectionStatus.STREAMING) {
+            Log.i(TAG, "detect(): el stream ya está activo, no se reinicia")
+            return
+        }
         if (!usbManager.isUsbHostAvailable) {
             _state.value = ThermalCameraState(
                 status = ThermalConnectionStatus.UNSUPPORTED,
@@ -230,6 +239,10 @@ class Gw192aThermalCameraDataSource(
     }
 
     private fun attemptStartStreamingInternal(device: UsbDevice) {
+        // Liberar cualquier sesión/conexión anterior ANTES de abrir otra: dos
+        // sesiones sobre la misma interfaz UVC se bloquean entre sí.
+        cleanupStreaming()
+
         val uvcResult = usbManager.readUvcDescriptors(device)
         if (uvcResult == null) {
             _state.value = _state.value.copy(
