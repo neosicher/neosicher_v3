@@ -120,10 +120,11 @@ class Gw192aThermalCameraDataSource(
             // Con permiso ya concedido, podemos enumerar directamente.
             connectAndInspect()
         } else {
-            _state.value = _state.value.copy(
-                status = ThermalConnectionStatus.CONNECTED,
-                message = "GW192A conectado",
-            )
+            // Sin permiso USB (p. ej. tras desinstalar y reinstalar la app, que
+            // borra el permiso que Android había guardado) hay que PEDIRLO: antes
+            // solo se mostraba "GW192A conectado" y nada llamaba a
+            // requestPermission(), así que el stream nunca arrancaba.
+            requestPermission()
         }
     }
 
