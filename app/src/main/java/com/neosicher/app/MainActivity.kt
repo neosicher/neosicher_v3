@@ -43,7 +43,7 @@ class MainActivity : ComponentActivity() {
         val versionName = runCatching {
             packageManager.getPackageInfo(packageName, 0).versionName
         }.getOrNull() ?: "?"
-        Toast.makeText(this, "NEOSICHER v$versionName · build postura-v2", Toast.LENGTH_LONG).show()
+        Toast.makeText(this, "NEOSICHER v$versionName · build lab-termico", Toast.LENGTH_LONG).show()
 
         setContent {
             NeosicherTheme {
