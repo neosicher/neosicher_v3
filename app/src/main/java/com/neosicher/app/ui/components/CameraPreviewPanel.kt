@@ -245,13 +245,19 @@ private fun ThermalContent(thermalState: ThermalCameraState) {
  */
 @Composable
 private fun ThermalStreamContent(frame: com.neosicher.app.thermal.ThermalFrameResult) {
+    val bitmap = frame.thermalPaletteBitmap ?: frame.visibleBitmap
     Box(modifier = Modifier.fillMaxSize()) {
-        // Imagen térmica + marcadores de puntos (más caliente / más frío / centro
-        // / punto elegido). Ver ThermalImageView. Solo se ve en modo térmico.
-        ThermalImageView(
-            frame = frame,
+        Image(
+            bitmap = bitmap.asImageBitmap(),
+            contentDescription = "Stream térmico experimental (sin calibrar)",
             modifier = Modifier.fillMaxSize(),
+            contentScale = ContentScale.Fit,
+            filterQuality = androidx.compose.ui.graphics.FilterQuality.None,
         )
+
+        // Raw máximo (▲) y raw mínimo (▼) del frame, con su valor. Solo se dibuja
+        // encima; la imagen y el resto del visor quedan como en la 2.0.0.
+        ThermalRawExtremesOverlay(frame = frame, modifier = Modifier.fillMaxSize())
 
         // Aviso permanente: nunca se debe interpretar esto como temperatura real.
         Row(
@@ -265,12 +271,10 @@ private fun ThermalStreamContent(frame: com.neosicher.app.thermal.ThermalFrameRe
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text(
-                text = when {
-                    frame.measurements?.calibrated == true ->
-                        "Experimental · °C aproximados (calibración del usuario)"
-                    frame.rawMin != null && frame.rawMax != null ->
-                        "Experimental · sin calibrar · raw[${frame.rawMin}–${frame.rawMax}]"
-                    else -> "Experimental · sin calibrar"
+                text = if (frame.rawMin != null && frame.rawMax != null) {
+                    "Experimental · sin calibrar · raw máx ${frame.rawMax} · mín ${frame.rawMin}"
+                } else {
+                    "Experimental · sin calibrar"
                 },
                 color = NeoColors.Background,
                 fontWeight = FontWeight.SemiBold,

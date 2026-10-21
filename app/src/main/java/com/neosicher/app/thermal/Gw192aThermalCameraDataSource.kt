@@ -87,15 +87,6 @@ class Gw192aThermalCameraDataSource(
     }
 
     override fun detect() {
-        // Si el stream YA está en marcha, no reiniciarlo. selectMode() llama a
-        // detect() cada vez que se elige el modo térmico (también al tocar la
-        // pestaña en la que ya se está); reabrir la conexión mientras la sesión
-        // anterior sigue teniendo reclamada la interfaz hace que TODOS los
-        // formatos fallen y el visor pase a "Stream térmico no disponible".
-        if (streamingSession != null && _state.value.status == ThermalConnectionStatus.STREAMING) {
-            Log.i(TAG, "detect(): el stream ya está activo, no se reinicia")
-            return
-        }
         if (!usbManager.isUsbHostAvailable) {
             _state.value = ThermalCameraState(
                 status = ThermalConnectionStatus.UNSUPPORTED,
@@ -129,10 +120,9 @@ class Gw192aThermalCameraDataSource(
             // Con permiso ya concedido, podemos enumerar directamente.
             connectAndInspect()
         } else {
-            // Sin permiso USB (p. ej. tras desinstalar y reinstalar la app, que
-            // borra el permiso que Android había guardado) hay que PEDIRLO: antes
-            // solo se mostraba "GW192A conectado" y nada llamaba a
-            // requestPermission(), así que el stream nunca arrancaba.
+            // Sin permiso USB (p. ej. tras reinstalar la app, que borra el permiso
+            // guardado) no hay stream posible: se PIDE el permiso. Solo actúa
+            // cuando falta; con permiso concedido el flujo es el de la 2.0.0.
             requestPermission()
         }
     }
@@ -239,10 +229,6 @@ class Gw192aThermalCameraDataSource(
     }
 
     private fun attemptStartStreamingInternal(device: UsbDevice) {
-        // Liberar cualquier sesión/conexión anterior ANTES de abrir otra: dos
-        // sesiones sobre la misma interfaz UVC se bloquean entre sí.
-        cleanupStreaming()
-
         val uvcResult = usbManager.readUvcDescriptors(device)
         if (uvcResult == null) {
             _state.value = _state.value.copy(

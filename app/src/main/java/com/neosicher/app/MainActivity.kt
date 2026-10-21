@@ -43,7 +43,7 @@ class MainActivity : ComponentActivity() {
         val versionName = runCatching {
             packageManager.getPackageInfo(packageName, 0).versionName
         }.getOrNull() ?: "?"
-        Toast.makeText(this, "NEOSICHER v$versionName · build lab-termico", Toast.LENGTH_LONG).show()
+        Toast.makeText(this, "NEOSICHER v$versionName · build termica-estable", Toast.LENGTH_LONG).show()
 
         setContent {
             NeosicherTheme {
@@ -54,9 +54,6 @@ class MainActivity : ComponentActivity() {
                     val viewModel: NeosicherViewModel = viewModel()
                     val state by viewModel.uiState.collectAsStateWithLifecycle()
                     val calibration by viewModel.calibration.collectAsStateWithLifecycle()
-                    val thermalSpot by viewModel.thermalSpot.collectAsStateWithLifecycle()
-                    val labMessage by viewModel.labMessage.collectAsStateWithLifecycle()
-                    val isRecordingThermal by viewModel.isRecordingThermal.collectAsStateWithLifecycle()
 
                     // Navegación mínima, local a esta Activity: la pantalla de
                     // calibración es independiente del dashboard principal y
@@ -81,21 +78,12 @@ class MainActivity : ComponentActivity() {
                     if (showCalibration) {
                         ThermalCalibrationScreen(
                             calibration = calibration,
-                            latestRawValueProvider = viewModel::latestReferenceRawValue,
+                            latestRawValueProvider = viewModel::latestCenterRawValue,
                             onSetColdPoint = viewModel::setColdCalibrationPoint,
                             onSetHotPoint = viewModel::setHotCalibrationPoint,
                             onSetBodyPoint = viewModel::setBodyCalibrationPoint,
                             onClearPoint = viewModel::clearCalibrationPoint,
                             onBack = { showCalibration = false },
-                            thermalState = state.thermalState,
-                            spot = thermalSpot,
-                            onSpotChange = viewModel::setThermalSpot,
-                            onAnalyzeFrame = viewModel::analyzeThermalFrame,
-                            onSaveRawFrame = viewModel::saveRawThermalFrame,
-                            isRecording = isRecordingThermal,
-                            onToggleRecording = viewModel::toggleThermalRecording,
-                            labMessage = labMessage,
-                            onDismissLabMessage = viewModel::dismissLabMessage,
                         )
                     } else {
                         NeosicherScreen(
